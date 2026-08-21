@@ -1,0 +1,52 @@
+Investor Dashboard
+
+1. Profile — Name, photo, bio, PAN-verified badge, investment preferences (sector, ticket size, geography, stage), portfolio summary
+
+2. Feed — Explore stream of matched/relevant businesses, filterable (sector, location, ticket size, readiness score), sorted by match %
+
+3. Notifications — New matches, messages, businesses updating profiles/scores, saved-business activity
+
+4. History — Past viewed businesses, past matches, past conversations, interaction timeline
+
+5. Settings — Account details, notification preferences, password/security, language toggle
+
+6. Analysis — Aggregate insights: sector-wise distribution of matches, comparison view across shortlisted businesses, trend of readiness scores among followed businesses
+
+7. Following — List of businesses the investor is tracking/shortlisted, quick-access cards with score + status updates
+
+Business Owner Dashboard
+
+1. Profile — Business name, sector, description, documents/verification badge, editable core + sector-specific fields
+
+2. Business Analysis — Readiness score with SHAP breakdown, improvement suggestions, historical score trend, benchmark vs similar businesses
+
+3. Notifications — New matches, messages, verification status updates, score changes
+
+4. History — Past matches, past investor interactions, profile edit history
+
+5. Feed — Ranked list of matched investors, match explanation per card, filter/sort
+
+6. Settings — Account details, notification preferences, password/security, language toggle
+
+7. Following — Investors the business owner is tracking/shortlisted, quick-access cards
+
+Registration
+
+Investor Side:
+
+Name, phone number (OTP verified), email
+PAN number (identity verification only, not accreditation)
+Investment preferences: sector, ticket size range, geography, stage
+Short bio/description
+Verification: identity-level only (PAN + OTP) — no net-worth/accreditation check, disclosed clearly as platform scope
+
+Business Side:
+
+Name, phone number (OTP verified), email
+Business name, sector, location
+Udyam Registration Number (primary verification anchor)
+GST Number (optional — not all small businesses have one)
+Shop Act License (optional)
+Photo upload of at least one supporting document (OCR pre-fills fields automatically)
+Short business description (template-assisted)
+Verification: tiered — "Basic" (Udyam only) vs "Verified" (Udyam + GST cross-checked); async processing, non-blocking
