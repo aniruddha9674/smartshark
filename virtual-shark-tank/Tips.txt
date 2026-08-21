@@ -1,0 +1,52 @@
+## Frontend
+
+1. Pick a color theme of your own, don't let AI choose. Store themes in a global format (CSS variables or a Tailwind config file) so they stay consistent across the project.
+2. Use Claude (recommended) to build pages individually — always give it a reference image of another website plus your color codes.
+3. Fonts used will be stored globally too, for consistency.
+4. Three-way frontend file distribution:
+   - **Components** — common modules like footers, headers, used throughout the site
+   - **Pages** — dashboard-specific page files
+   - **App.jsx** — the root component that defines routes and renders Pages/Components together via React Router; the entry point that wires everything together
+5. When editing existing frontend, prefer changing only that specific part rather than the whole file — always ask the AI for a targeted diff/change, not a full rewrite.
+6. Before backend is connected, tell the AI to use hardcoded/mock data instead, so you can see how things look before real data is wired in.
+7. Call backend APIs through a services file before using them in the component that needs them. All API routes should live in the services file.
+8. Images, videos, or external assets go in a `public` folder at the project root. Anything placed there is automatically copied into the `build` folder when you run `npm run build`.
+
+## Backend
+
+1. **Controllers** — this is where backend logic is written; contains commands and operations only, no business logic in routes.
+2. Middlewares — called with each API to validate, authenticate, and secure requests. Example: auth middleware checks JWT on every protected route.
+3. Models — database table/collection schemas, used respectively in Postgres/Mongo.
+4. Routes — where all APIs are declared and managed, pointing to their controller functions.
+5. Whenever adding a new API, check that proper imports are done at the top — models/schemas used, middleware, etc.
+6. `.env` — contains your credentials: secret keys, DB connection strings. Never commit this file (must be in `.gitignore`).
+7. `package.json` — contains all dependencies used in the project.
+8. Whenever you install a new dependency, run `npm install <package-name>` — this automatically adds it to `package.json`. Commit the updated `package.json` so teammates can run `npm install` and get the same packages.
+9. Config folder — configuration for external tools (Postgres, Mongo connections, etc.) managed here.
+10. **API versioning:** when creating an API, use `v1` in the route. When you need to make a breaking change, build `v2` alongside the working `v1`, test `v2` from the frontend, and only once it's confirmed stable, replace `v1` with it and retire the old version. This protects the live app from breaking mid-change.
+11. Always give the AI a reference file of an existing component before asking it to build a new one, and make sure your prompt follows the same CRUD conventions used elsewhere in the project.
+12. Always provide the relevant schema/model file to the AI if the API you're building touches the database.
+13. When an error comes up, three ways to debug:
+    - VS Code terminal — shows backend error logs
+    - Browser Inspect → Console — shows frontend errors
+    - Browser Inspect → Network — **preferred**, shows exact request/response, status codes, and payload, usually the fastest way to pinpoint what broke
+
+## Database
+
+1. Use **Drizzle** to manage the PostgreSQL side, and **Mongoose** to manage the MongoDB side — both keep schema definitions consistent across team members, just for their respective databases.
+2. This keeps your DB schema consistent across all team members, since everyone works off the same schema files instead of manually editing tables.
+3. Never make direct schema changes via a raw query. Instead:
+   - Edit the model/schema file in the backend
+   - For Postgres: run `drizzle-kit generate` to create a migration from your schema changes, then `drizzle-kit migrate` to apply it to the database
+   - For MongoDB: update the Mongoose schema file directly — Mongo is schema-flexible, so there's no formal migration step, but plan for backward-compatible field additions since existing documents won't automatically update
+
+## GitHub
+
+1. When you make a change, always tell the team before pushing:
+   ```
+   git add .
+   git commit -m "Info about change"
+   git push
+   ```
+2. Whenever someone else makes changes, remember to `git pull` before starting your own work, so you're not working on an outdated version.
+3. Never edit a file someone else is actively working on.
