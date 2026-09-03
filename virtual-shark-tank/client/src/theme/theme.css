@@ -1,0 +1,20 @@
+:root {
+  --color-primary: #0f5132;
+  --color-secondary: #d4a373;
+  --color-bg: #faf9f6;
+  --color-surface: #ffffff;
+  --color-text: #1a1a1a;
+  --color-text-muted: #6b6b6b;
+  --color-border: #e5e2da;
+  --font-display: "Poppins", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 40px;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); }
+h1, h2, h3 { font-family: var(--font-display); }
