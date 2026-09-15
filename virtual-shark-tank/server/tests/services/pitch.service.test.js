@@ -348,15 +348,25 @@ describe("pitch.service", () => {
     });
 
     it("respects limit", async () => {
-      const biz = await createBusinessUser(true);
-      for (let i = 0; i < 3; i++) {
-        const p = await service.createPitch(biz.id, validCreatePayload({ title: `P${i}` }));
-        await service.publishPitch(p.id, biz.id);
-        await service.closePitch(p.id, biz.id);
-        await db.update(pitches).set({ status: "live" }).where(eq(pitches.id, p.id));
-      }
-      const limited = await service.listLivePitches({ limit: 2 });
-      expect(limited.length).toBe(2);
-    });
+  const biz = await createBusinessUser(true);
+
+  // Bypass the one-live rule for setup — create 3 pitches, force them all live
+  for (let i = 0; i < 3; i++) {
+    const p = await service.createPitch(
+      biz.id,
+      validCreatePayload({ title: `P${i}` })
+    );
+    await db
+      .update(pitches)
+      .set({ status: "live", publishedAt: new Date() })
+      .where(eq(pitches.id, p.id));
+  }
+
+  const limited = await service.listLivePitches({ limit: 2 });
+  expect(limited.length).toBe(2);
+
+  const all = await service.listLivePitches();
+  expect(all.length).toBe(3);
+});
   });
 });
