@@ -6,7 +6,11 @@
     "dev": "nodemon server.js",
     "test": "cross-env NODE_ENV=test vitest run",
     "test:watch": "cross-env NODE_ENV=test vitest",
-    "test:coverage": "cross-env NODE_ENV=test vitest run --coverage"
+    "test:coverage": "cross-env NODE_ENV=test vitest run --coverage",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push",
+    "studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

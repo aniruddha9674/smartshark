@@ -71,6 +71,13 @@
       "when": 1789046562946,
       "tag": "0009_abandoned_klaw",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789491553846,
+      "tag": "0010_skinny_wendell_rand",
+      "breakpoints": true
     }
   ]
 }

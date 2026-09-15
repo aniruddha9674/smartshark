@@ -1,0 +1,215 @@
+import { eq, and, desc, sql } from "drizzle-orm";
+import { db } from "../config/db.postgres.js";
+import { pitches, users } from "../models/postgres/index.js";
+import { ApiError } from "../utils/apiError.js";
+import { REQUIRED_TO_PUBLISH } from "../validators/pitch.validator.js";
+
+// ---------- Helpers ----------
+const computeValuation = (askAmount, equityOffered) => {
+  const ask = Number(askAmount);
+  const equity = Number(equityOffered);
+  return (ask / (equity / 100)).toFixed(2); // numeric → string
+};
+
+// ---------- Create draft ----------
+export const createPitch = async (businessId, data) => {
+  const { askAmount, equityOffered, ...rest } = data;
+
+  const [pitch] = await db
+    .insert(pitches)
+    .values({
+      businessId,
+      ...rest,
+      askAmount: String(askAmount),
+      equityOffered: String(equityOffered),
+      valuation: computeValuation(askAmount, equityOffered),
+      status: "draft",
+    })
+    .returning();
+
+  return pitch;
+};
+
+// ---------- List my pitches ----------
+export const getMyPitches = async (businessId) => {
+  return await db.query.pitches.findMany({
+    where: eq(pitches.businessId, businessId),
+    orderBy: [desc(pitches.createdAt)],
+  });
+};
+
+// ---------- Get one pitch ----------
+export const getPitch = async (pitchId, requestingUserId) => {
+  const pitch = await db.query.pitches.findFirst({
+    where: eq(pitches.id, pitchId),
+  });
+
+  if (!pitch) throw ApiError.notFound("Pitch not found");
+
+  // Owner sees any status. Everyone else only sees live pitches.
+  const isOwner = pitch.businessId === requestingUserId;
+  if (!isOwner && pitch.status !== "live") {
+    throw ApiError.notFound("Pitch not found");
+  }
+
+  return pitch;
+};
+
+// ---------- Update draft ----------
+export const updatePitch = async (pitchId, userId, changes) => {
+  const pitch = await db.query.pitches.findFirst({
+    where: eq(pitches.id, pitchId),
+  });
+
+  if (!pitch) throw ApiError.notFound("Pitch not found");
+  if (pitch.businessId !== userId) {
+    throw ApiError.forbidden("You do not own this pitch");
+  }
+  if (pitch.status !== "draft") {
+    throw ApiError.badRequest(`Cannot edit a ${pitch.status} pitch`);
+  }
+
+  // Recompute valuation if ask or equity changed
+  let valuation = pitch.valuation;
+  if (changes.askAmount != null || changes.equityOffered != null) {
+    const nextAsk = changes.askAmount ?? pitch.askAmount;
+    const nextEquity = changes.equityOffered ?? pitch.equityOffered;
+    valuation = computeValuation(nextAsk, nextEquity);
+  }
+
+  const updates = {
+    ...changes,
+    valuation,
+  };
+
+  // Coerce numeric fields to strings (Drizzle numeric expects strings)
+  if (updates.askAmount != null) updates.askAmount = String(updates.askAmount);
+  if (updates.equityOffered != null) updates.equityOffered = String(updates.equityOffered);
+  if (updates.monthlyGrowthPct != null) updates.monthlyGrowthPct = String(updates.monthlyGrowthPct);
+
+  const [updated] = await db
+    .update(pitches)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(eq(pitches.id, pitchId))
+    .returning();
+
+  return updated;
+};
+
+// ---------- Publish ----------
+export const publishPitch = async (pitchId, userId) => {
+  const pitch = await db.query.pitches.findFirst({
+    where: eq(pitches.id, pitchId),
+  });
+
+  if (!pitch) throw ApiError.notFound("Pitch not found");
+  if (pitch.businessId !== userId) {
+    throw ApiError.forbidden("You do not own this pitch");
+  }
+  if (pitch.status !== "draft") {
+    throw ApiError.badRequest(`Cannot publish a ${pitch.status} pitch`);
+  }
+
+  // 1. Profile must be complete
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+  if (!user.isProfileComplete) {
+    throw ApiError.badRequest("Complete your profile before publishing a pitch");
+  }
+
+  // 2. Required fields must be present
+  const missing = REQUIRED_TO_PUBLISH.filter((field) => {
+    const value = pitch[field];
+    return value === null || value === undefined || value === "";
+  });
+  if (missing.length > 0) {
+    throw ApiError.badRequest("Pitch is incomplete", { missingFields: missing });
+  }
+
+  // 3. No other live pitch (one live pitch per business)
+  const existingLive = await db.query.pitches.findFirst({
+    where: and(
+      eq(pitches.businessId, userId),
+      eq(pitches.status, "live")
+    ),
+  });
+  if (existingLive) {
+    throw ApiError.conflict(
+      "You already have a live pitch. Close it before publishing a new one."
+    );
+  }
+
+  const [updated] = await db
+    .update(pitches)
+    .set({
+      status: "live",
+      publishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(pitches.id, pitchId))
+    .returning();
+
+  return updated;
+};
+
+// ---------- Close ----------
+export const closePitch = async (pitchId, userId) => {
+  const pitch = await db.query.pitches.findFirst({
+    where: eq(pitches.id, pitchId),
+  });
+
+  if (!pitch) throw ApiError.notFound("Pitch not found");
+  if (pitch.businessId !== userId) {
+    throw ApiError.forbidden("You do not own this pitch");
+  }
+  if (pitch.status !== "live") {
+    throw ApiError.badRequest(`Cannot close a ${pitch.status} pitch`);
+  }
+
+  const [updated] = await db
+    .update(pitches)
+    .set({
+      status: "closed",
+      closedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(pitches.id, pitchId))
+    .returning();
+
+  return updated;
+};
+
+// ---------- Delete draft ----------
+export const deletePitch = async (pitchId, userId) => {
+  const pitch = await db.query.pitches.findFirst({
+    where: eq(pitches.id, pitchId),
+  });
+
+  if (!pitch) throw ApiError.notFound("Pitch not found");
+  if (pitch.businessId !== userId) {
+    throw ApiError.forbidden("You do not own this pitch");
+  }
+  if (pitch.status !== "draft") {
+    throw ApiError.badRequest("Only draft pitches can be deleted");
+  }
+
+  await db.delete(pitches).where(eq(pitches.id, pitchId));
+  return { deleted: true };
+};
+
+// ---------- List live pitches (investor feed) ----------
+export const listLivePitches = async (filters = {}) => {
+  const { stage, revenueRange, limit = 50, offset = 0 } = filters;
+
+  const conditions = [eq(pitches.status, "live")];
+  if (stage) conditions.push(eq(pitches.stage, stage));
+  if (revenueRange) conditions.push(eq(pitches.revenueRange, revenueRange));
+
+  return await db.query.pitches.findMany({
+    where: and(...conditions),
+    orderBy: [desc(pitches.publishedAt)],
+    limit: Math.min(Number(limit), 100),
+    offset: Number(offset),
+  });
+};
