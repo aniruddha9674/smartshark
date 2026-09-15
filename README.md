@@ -1,2 +1,0 @@
-# smartshark
-BE final project 
