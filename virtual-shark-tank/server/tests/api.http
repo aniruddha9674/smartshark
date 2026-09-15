@@ -1,0 +1,95 @@
+@baseUrl = http://localhost:5000
+@token = PASTE_ACCESS_TOKEN_HERE
+@email = test@example.com
+@password = Password123
+
+### ─────────────────────────────────────────
+### 1. Health check
+### ─────────────────────────────────────────
+GET {{baseUrl}}/health
+
+### ─────────────────────────────────────────
+### 2. Register a new user
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Test User",
+  "email": "{{email}}",
+  "password": "{{password}}",
+  "role": "investor"
+}
+
+### ─────────────────────────────────────────
+### 3. Login
+### ─────────────────────────────────────────
+# @name login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### ─────────────────────────────────────────
+### 4. Me (no token) → should 401
+### ─────────────────────────────────────────
+GET {{baseUrl}}/api/auth/me
+
+### ─────────────────────────────────────────
+### 5. Me (with token) → should 200
+### ─────────────────────────────────────────
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{token}}
+
+### ─────────────────────────────────────────
+### 6. Login with wrong password → should 401
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "WrongPassword"
+}
+
+### ─────────────────────────────────────────
+### 7. Duplicate register → should 409
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "Test User",
+  "email": "{{email}}",
+  "password": "{{password}}",
+  "role": "investor"
+}
+
+### ─────────────────────────────────────────
+### 8. Invalid input → should 400
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "not-an-email",
+  "password": "123"
+}
+
+### ─────────────────────────────────────────
+### 9. Refresh token
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/refresh
+
+### ─────────────────────────────────────────
+### 10. Logout
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/logout
+
+### ─────────────────────────────────────────
+### 11. Refresh after logout → should 401
+### ─────────────────────────────────────────
+POST {{baseUrl}}/api/auth/refreshs
