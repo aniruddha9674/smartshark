@@ -1,14 +1,37 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import dotenv from "dotenv";
-dotenv.config();
+import { drizzle } from "drizzle-orm/node-postgres";
+import pkg from "pg";
+import { env } from "./env.js";
+import * as schema from "../models/postgres/index.js";
 
-const client = postgres(process.env.POSTGRES_URI);
-export const db = drizzle(client);
+const { Pool } = pkg;
+
+let db;
+let pool = null;
+
+if (process.env.NODE_ENV === "test") {
+  db = global.__testDb;
+} else {
+  pool = new Pool({
+    connectionString: env.postgresUri,
+    ssl: { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 15000,
+    family: 4,                        // ← FORCE IPv4 (fixes ENOTFOUND on Jio)
+  });
+
+  db = drizzle(pool, { schema });
+}
+
+export { db };
 
 export const testConnection = async () => {
+  if (process.env.NODE_ENV === "test") return;
+
   try {
-    await client`SELECT 1`;
+    const client = await pool.connect();
+    await client.query("SELECT 1");
+    client.release();
     console.log("Postgres connected");
   } catch (err) {
     console.error("Postgres connection failed:", err.message);
