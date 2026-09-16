@@ -215,6 +215,30 @@ PitchUpdate: {
     sectorSpecificFields: { type: "object", nullable: true },
   },
 },
+FollowedUser: {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    name: { type: "string" },
+    role: { type: "string", enum: ["business", "investor", "admin"] },
+    avatarUrl: { type: "string", nullable: true },
+    isProfileComplete: { type: "boolean" },
+    followedAt: { type: "string", format: "date-time" },
+    profile: {
+      type: "object",
+      nullable: true,
+      description: "Business profile fields for business users, investor profile fields for investors",
+    },
+  },
+},
+Pagination: {
+  type: "object",
+  properties: {
+    limit: { type: "integer", example: 20 },
+    offset: { type: "integer", example: 0 },
+    total: { type: "integer", example: 42 },
+  },
+},
       },
     },
     security: [{ bearerAuth: [] }],

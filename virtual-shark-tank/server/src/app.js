@@ -8,6 +8,7 @@ import { swaggerSpec } from "./config/swagger.js";
 import businessRoutes from "./routes/business.routes.js";
 import investorRoutes from "./routes/investor.routes.js";
 import pitchRoutes from "./routes/pitch.routes.js";
+import followRoutes from "./routes/follow.routes.js";
 
 
 const app = express();
@@ -24,6 +25,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/business", businessRoutes); 
 app.use("/api/investor", investorRoutes);
 app.use("/api/pitches", pitchRoutes);
+app.use("/api/follows", followRoutes);
 
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
