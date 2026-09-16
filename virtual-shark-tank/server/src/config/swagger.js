@@ -239,6 +239,76 @@ Pagination: {
     total: { type: "integer", example: 42 },
   },
 },
+ConversationSummary: {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    lastMessageAt: { type: "string", format: "date-time" },
+    createdAt: { type: "string", format: "date-time" },
+    otherUser: {
+      type: "object",
+      nullable: true,
+      properties: {
+        id: { type: "string", format: "uuid" },
+        name: { type: "string" },
+        role: { type: "string", enum: ["business", "investor", "admin"] },
+        avatarUrl: { type: "string", nullable: true },
+      },
+    },
+    lastMessage: {
+      type: "object",
+      nullable: true,
+      properties: {
+        body: { type: "string" },
+        senderId: { type: "string", format: "uuid" },
+        sentByMe: { type: "boolean" },
+      },
+    },
+    unreadCount: { type: "integer", example: 2 },
+  },
+},
+Conversation: {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    participantAId: { type: "string", format: "uuid" },
+    participantBId: { type: "string", format: "uuid" },
+    lastMessageAt: { type: "string", format: "date-time" },
+    createdAt: { type: "string", format: "date-time" },
+  },
+},
+ConversationWithUser: {
+  allOf: [
+    { $ref: '#/components/schemas/Conversation' },
+    {
+      type: "object",
+      properties: {
+        otherUser: {
+          type: "object",
+          nullable: true,
+          properties: {
+            id: { type: "string", format: "uuid" },
+            name: { type: "string" },
+            role: { type: "string" },
+            avatarUrl: { type: "string", nullable: true },
+          },
+        },
+      },
+    },
+  ],
+},
+Message: {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    conversationId: { type: "string", format: "uuid" },
+    senderId: { type: "string", format: "uuid" },
+    body: { type: "string" },
+    isRead: { type: "boolean" },
+    readAt: { type: "string", format: "date-time", nullable: true },
+    createdAt: { type: "string", format: "date-time" },
+  },
+},
       },
     },
     security: [{ bearerAuth: [] }],
