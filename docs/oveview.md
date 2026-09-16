@@ -128,7 +128,7 @@ At this scale, microservices would add overhead (deployment, tracing, distribute
 
 ```
 server/src/
-├── config/           ← DB connections, env validation
+├── config/           ← DB connections, env, Swagger spec
 ├── models/           ← schema definitions (postgres/ + mongo/)
 ├── routes/           ← URL → handler mapping
 ├── middleware/       ← cross-cutting (auth, validation, errors)
@@ -137,6 +137,7 @@ server/src/
 ├── validators/       ← request schemas
 ├── utils/            ← pure helpers
 └── app.js            ← Express setup
+
 ```
 
 **One rule:** dependencies point downward.
@@ -147,6 +148,7 @@ routes → controllers → services → models
               └── validators
               └── utils
 ```
+
 
 Controllers never import `db`. Services never import `req`/`res`.
 
@@ -286,6 +288,19 @@ See [database.md §5 Indexes](./database.md#5-indexes).
 | **HTTP assertions** | Supertest | Drives the app without opening a port |
 | **Test Postgres** | PGlite | In-memory WASM Postgres — no Docker, no network |
 | **CI** | GitHub Actions | Free for public repos, tight GitHub integration |
+| **API docs** | `swagger-ui-express` + `swagger-jsdoc` | Code-first OpenAPI from JSDoc annotations |
+
+### 8.4.1 API Documentation
+
+Live interactive docs served at `/docs`. Generated from `@openapi` JSDoc comments in every route file.
+
+- **Spec:** OpenAPI 3.0
+- **UI:** Swagger UI
+- **Shared schemas:** 13 reusable component schemas
+- **Coverage:** 32 endpoints across 6 tags (Auth, Business Profile, Investor Profile, Pitches, Follows, Conversations)
+- **Try-it-out:** every endpoint executable from the browser
+
+Frontend team uses it as the contract. No Postman collections, no docs drift.
 
 ### 8.5 Deployment (planned)
 
@@ -339,13 +354,14 @@ Order matters — each step unblocks the next.
 | Phase | Feature | Depends on | Status |
 |---|---|---|---|
 | 1 | Auth | — | ✅ Complete |
-| 2 | Business + investor profiles | Auth | ⏳ Next |
-| 3 | Pitches | Profiles | ⏳ |
-| 4 | Matching (rule-based) | Profiles + pitches | ⏳ |
-| 5 | Offers | Pitches | ⏳ |
-| 6 | Conversations | Matches | ⏳ |
+| 2 | Business + investor profiles | Auth | ✅ Complete |
+| 3 | Pitches | Profiles | ✅ Complete |
+| 4 | Follows + Conversations | Auth | ✅ Complete |
+| 5 | Matching (rule-based) | Profiles + pitches | ⏳ Next |
+| 6 | Offers | Pitches | ⏳ |
 | 7 | Verification (Mongo ↔ Postgres) | Profiles | ⏳ |
 | 8 | Readiness scoring (ML) | Profiles + history data | ⏳ |
+| 9 | AI pitch assistant | Pitches + LLM | ⏳ |
 
 **Why this order:**
 - Profiles gate everything — feeds, matching, and pitches all need completed profiles

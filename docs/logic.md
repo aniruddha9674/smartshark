@@ -22,7 +22,23 @@ Five layers, each with a single responsibility. Files are grouped by layer.
 | **Middleware** | `src/middleware/` | Cross-cutting concerns (auth, validation, errors) |
 | **Controllers** | `src/controllers/` | HTTP layer — parse request, call service, send response |
 | **Services** | `src/services/` | Business logic, database access |
-| **Validators** | `src/validators/` | Request body shape (zod schemas) |
+| **Validators** | `src/validators/` | Request body + query shape (zod schemas) |
+
+### 1.1 Service catalog
+
+Current services and their responsibilities:
+
+| Service | Purpose |
+|---|---|
+| `auth.service.js` | Register, login, refresh rotation, logout |
+| `businessProfile.service.js` | Read/update business profile + audit trail |
+| `investorProfile.service.js` | Read/update investor profile |
+| `pitch.service.js` | Pitch CRUD + lifecycle (draft → live → closed) |
+| `follow.service.js` | Follow/unfollow + follower/following lists |
+| `conversation.service.js` | Get/create conversations, chat list, unread counts |
+| `message.service.js` | Send/list messages, mark read, rate-limit gate |
+| `notification.service.js` | Cross-cutting — insert notifications, respecting user prefs |
+| `rateLimit.service.js` | In-memory daily rate limiter (per user, per action) |
 
 Supporting layers:
 
@@ -105,17 +121,74 @@ app.use("/api/investor", investorRoutes);
 app.use("/api/pitches", pitchRoutes);
 ```
 
-### 3.2 Auth routes
+### 3.2 All routes
+
+Every prefix mounts a router. All routes require a valid access token unless marked `public`.
 
 **File:** `src/routes/auth.routes.js`
+| Method | Path | Middleware | Auth |
+|---|---|---|---|
+| POST | `/api/auth/register` | `validate(registerSchema)` | public |
+| POST | `/api/auth/login` | `validate(loginSchema)` | public |
+| POST | `/api/auth/refresh` | — | cookie |
+| POST | `/api/auth/logout` | — | cookie |
+| GET | `/api/auth/me` | `requireAuth` | Bearer |
 
-| Method | Path | Middleware | Handler | Auth |
-|---|---|---|---|---|
-| POST | `/api/auth/register` | `validate(registerSchema)` | `authController.register` | none |
-| POST | `/api/auth/login` | `validate(loginSchema)` | `authController.login` | none |
-| POST | `/api/auth/refresh` | — | `authController.refresh` | cookie |
-| POST | `/api/auth/logout` | — | `authController.logout` | cookie |
-| GET | `/api/auth/me` | `requireAuth` | `authController.me` | Bearer |
+**File:** `src/routes/business.routes.js` — `router.use(requireAuth, requireRole("business"))`
+| Method | Path |
+|---|---|
+| GET | `/api/business/me` |
+| PATCH | `/api/business/me` |
+| POST | `/api/business/complete` |
+| GET | `/api/business/history` |
+
+**File:** `src/routes/investor.routes.js` — `router.use(requireAuth, requireRole("investor"))`
+| Method | Path |
+|---|---|
+| GET | `/api/investor/me` |
+| PATCH | `/api/investor/me` |
+| POST | `/api/investor/complete` |
+
+**File:** `src/routes/pitch.routes.js` — mixed roles
+| Method | Path | Role |
+|---|---|---|
+| GET | `/api/pitches` | any auth |
+| POST | `/api/pitches` | business |
+| GET | `/api/pitches/me` | business |
+| GET | `/api/pitches/:id` | any auth |
+| PATCH | `/api/pitches/:id` | business owner |
+| POST | `/api/pitches/:id/publish` | business owner |
+| POST | `/api/pitches/:id/close` | business owner |
+| DELETE | `/api/pitches/:id` | business owner |
+
+**File:** `src/routes/follow.routes.js` — `router.use(requireAuth)`
+| Method | Path |
+|---|---|
+| GET | `/api/follows/following` |
+| GET | `/api/follows/followers` |
+| GET | `/api/follows/status/:userId` |
+| POST | `/api/follows/:userId` |
+| DELETE | `/api/follows/:userId` |
+
+**File:** `src/routes/conversation.routes.js` — `router.use(requireAuth)`
+| Method | Path |
+|---|---|
+| GET | `/api/conversations` |
+| POST | `/api/conversations` |
+| GET | `/api/conversations/unread-count` |
+| GET | `/api/conversations/:id` |
+| GET | `/api/conversations/:id/messages` |
+| POST | `/api/conversations/:id/messages` |
+| POST | `/api/conversations/:id/read` |
+
+**Total: 32 endpoints across 6 routers.**
+
+### 3.2.1 Swagger UI
+
+Interactive API docs served at `/docs` via `swagger-ui-express`. Spec built from JSDoc `@openapi` comments in each route file (`swagger-jsdoc`).
+
+**Config:** `src/config/swagger.js`
+**Shared schemas:** `User`, `ErrorResponse`, `BusinessProfile`, `InvestorProfile`, `Pitch`, `PitchCreate`, `PitchUpdate`, `FollowedUser`, `Pagination`, `ConversationSummary`, `Conversation`, `ConversationWithUser`, `Message`
 
 **Notes:**
 - `/refresh` and `/logout` read the refresh token from an httpOnly cookie — no `requireAuth` needed
@@ -281,13 +354,13 @@ Middleware runs before the controller. Each function receives `(req, res, next)`
 
 ### 6.2 `validate.middleware.js`
 
-**Export:** `validate(schema)`
+**Export:** `validate(schema, source = "body")`
 
-Factory that returns a middleware. Runs `schema.safeParse(req.body)`:
-- Success → replaces `req.body` with parsed data (strips unknown fields)
+Factory that returns a middleware. Runs `schema.safeParse(req[source])`:
+- Success → replaces `req[source]` with parsed data (strips unknown fields)
 - Failure → `next(ApiError.badRequest("Validation failed", details))`
 
-**Why:** Never trust client input. Validation happens before any service runs.
+**`source` param:** defaults to `"body"`, but can be `"query"` or `"params"`. Added when conversation list endpoints needed query-param validation. Backward compatible — existing routes call `validate(schema)` and still work.
 
 ### 6.3 `error.middleware.js`
 
@@ -298,6 +371,27 @@ The **last** middleware registered in `app.js`. Catches everything:
 - Unknown error → logs to console, returns 500 (with stack in dev)
 
 **Why:** Controllers use `asyncHandler` to forward errors here. No controller writes error responses itself.
+
+### 6.4 `notification.service.js` (service, called by middleware-adjacent logic)
+
+Not Express middleware, but cross-cutting. Every service that produces a user-visible event calls `createNotification`.
+
+**Why it's safe to call anywhere:** catches its own errors. A failed notification never fails the parent operation. Also respects the recipient's `notify*` preference columns on `users`.
+
+**Called from:** `follow.service.js`, `message.service.js`. Later: `match.service.js`, `offer.service.js`.
+
+### 6.5 `rateLimit.service.js`
+
+In-memory daily counter, keyed by `userId:action:YYYY-MM-DD`. Exposes:
+- `enforceLimit(userId, action, limit)` — throws `ApiError.tooManyRequests` (429) if over
+- `checkLimit(userId, action, limit)` — read-only
+- `_resetAll()` — test helper
+
+**Current limits:**
+- `send_message`: 500/day per user
+- `new_conversation`: 50/day per user
+
+**Why in-memory:** works for a single-server MVP. Swap to Redis when you scale horizontally. Interface stays the same.
 
 ---
 
@@ -540,6 +634,12 @@ Tests mirror the layer structure.
 | `tests/auth/login.test.js` | Integration | 10 |
 | `tests/auth/refresh.test.js` | Integration | 14 |
 | `tests/health.test.js` | Smoke | 1 |
+| `tests/services/rateLimit.service.test.js` | Service | 10 |
+| `tests/services/conversation.service.test.js` | Service | 19 |
+| `tests/services/message.service.test.js` | Service | 13 |
+| `tests/follows/follow.test.js` | Integration | 17 |
+| `tests/conversations/conversation.test.js` | Integration | 11 |
+| `tests/conversations/message.test.js` | Integration | 11 |
 
 **Total:** 82 tests. Run with `npm test`. Runs on every push via GitHub Actions.
 
