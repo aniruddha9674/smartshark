@@ -3,6 +3,8 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import authRoutes from "./routes/auth.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./config/swagger.js";
 import businessRoutes from "./routes/business.routes.js";
 import investorRoutes from "./routes/investor.routes.js";
 import pitchRoutes from "./routes/pitch.routes.js";
@@ -22,6 +24,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/business", businessRoutes); 
 app.use("/api/investor", investorRoutes);
 app.use("/api/pitches", pitchRoutes);
+
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use(errorHandler);
 
