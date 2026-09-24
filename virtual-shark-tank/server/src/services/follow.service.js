@@ -52,6 +52,7 @@ export const followBusiness = async (followerId, businessId) => {
         businessId,
         targetType: "business",
       },
+      eventId: `follow:${followerId}:business:${businessId}`,
     });
   }
 
@@ -135,6 +136,7 @@ export const followInvestor = async (followerId, targetUserId) => {
         targetUserId,
         targetType: "investor",
       },
+      eventId: `follow:${followerId}:investor:${targetUserId}`,
     });
   }
 
@@ -224,36 +226,38 @@ export const getFollowing = async (userId, { limit = 20, offset = 0 } = {}) => {
   const investorMap = new Map(investorRows.map((r) => [r.user.id, r]));
 
   // Merge into a single list, newest first (already sorted from follows)
-  const merged = rows.map((r) => {
-    if (r.targetType === "business") {
-      const entry = businessMap.get(r.targetBusinessId);
+  const merged = rows
+    .map((r) => {
+      if (r.targetType === "business") {
+        const entry = businessMap.get(r.targetBusinessId);
+        if (!entry) return null;
+        return {
+          type: "business",
+          id: entry.business.id,
+          companyName: entry.business.companyName,
+          sector: entry.business.sector,
+          city: entry.business.city,
+          verificationTier: entry.business.verificationTier,
+          isProfileComplete: entry.business.isProfileComplete,
+          owner: entry.owner,
+          followedAt: r.createdAt,
+        };
+      }
+      const entry = investorMap.get(r.targetUserId);
       if (!entry) return null;
       return {
-        type: "business",
-        id: entry.business.id,
-        companyName: entry.business.companyName,
-        sector: entry.business.sector,
-        city: entry.business.city,
-        verificationTier: entry.business.verificationTier,
-        isProfileComplete: entry.business.isProfileComplete,
-        owner: entry.owner,
+        type: "investor",
+        id: entry.user.id,
+        name: entry.user.name,
+        avatarUrl: entry.user.avatarUrl,
+        firmName: entry.profile?.firmName ?? null,
+        investmentFocus: entry.profile?.investmentFocus ?? null,
+        preferredGeography: entry.profile?.preferredGeography ?? null,
+        isIdentityVerified: entry.profile?.isIdentityVerified ?? false,
         followedAt: r.createdAt,
       };
-    }
-    const entry = investorMap.get(r.targetUserId);
-    if (!entry) return null;
-    return {
-      type: "investor",
-      id: entry.user.id,
-      name: entry.user.name,
-      avatarUrl: entry.user.avatarUrl,
-      firmName: entry.profile?.firmName ?? null,
-      investmentFocus: entry.profile?.investmentFocus ?? null,
-      preferredGeography: entry.profile?.preferredGeography ?? null,
-      isIdentityVerified: entry.profile?.isIdentityVerified ?? false,
-      followedAt: r.createdAt,
-    };
-  }).filter(Boolean);
+    })
+    .filter(Boolean);
 
   // Paginate in-memory (list is small per user)
   const total = merged.length;

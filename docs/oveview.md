@@ -420,16 +420,3 @@ README.md         ← what it is, how to run, quick links
             └── §3 routes, §5 services, §10 end-to-end trace
 ```
 
-**Reading paths:**
-
-| Reader | Path |
-|---|---|
-| Recruiter / newcomer | README → overview → done |
-| Backend dev onboarding | README → overview → logic → code |
-| DB-minded dev | README → overview → database → code |
-| Future you, 3 months later | Any file, via anchor link |
-
-**Sections that get outdated fastest:** §11 Roadmap. Update it when you ship a phase.
-
-**Sections that stay stable:** §5 Application Structure, §6 Security Model, §12 Design Principles. These reflect decisions you won't revisit.
-

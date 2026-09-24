@@ -32,10 +32,8 @@ const computeExpiry = (days) => {
   return new Date(Date.now() + d * 24 * 60 * 60 * 1000);
 };
 
-// Lazy expiry check — called at the top of every state transition.
-// No cron needed. If expired, mark it and throw.
 const assertNotExpired = async (offer) => {
-  if (offer.status !== "pending") return; // terminal states don't expire
+  if (offer.status !== "pending") return;
   if (new Date(offer.expiresAt) > new Date()) return;
 
   await db
@@ -43,33 +41,39 @@ const assertNotExpired = async (offer) => {
     .set({ status: "expired", respondedAt: new Date() })
     .where(eq(offers.id, offer.id));
 
-  // Notify both parties — best effort
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, offer.businessId),
+    columns: { ownerId: true },
+  });
+
   await Promise.allSettled([
     createNotification({
       userId: offer.investorId,
       type: "offer_expired",
       title: "Your offer expired",
       metadata: { offerId: offer.id, pitchId: offer.pitchId },
+      eventId: `offer_expired_investor:${offer.id}`,
     }),
-    createNotification({
-      userId: offer.initiatedById === offer.investorId ? offer.businessId : offer.investorId,
-      type: "offer_expired",
-      title: "An offer expired",
-      metadata: { offerId: offer.id, pitchId: offer.pitchId },
-    }),
+    business
+      ? createNotification({
+          userId: business.ownerId,
+          type: "offer_expired",
+          title: "An offer expired",
+          metadata: { offerId: offer.id, pitchId: offer.pitchId },
+          eventId: `offer_expired_business:${offer.id}`,
+        })
+      : Promise.resolve(null),
   ]);
 
   throw ApiError.badRequest("Offer has expired");
 };
 
-// Cannot counter an offer you made yourself — this is what makes turns alternate
 const assertCanCounter = (offer, userId) => {
   if (offer.initiatedById === userId) {
     throw ApiError.forbidden("You cannot counter your own offer. Wait for the other party to respond.");
   }
 };
 
-// Walk up the parent chain to get depth
 const getThreadDepth = async (offerId) => {
   let depth = 1;
   let current = offerId;
@@ -86,24 +90,20 @@ const getThreadDepth = async (offerId) => {
 };
 
 // ============================================================
-// CREATE (investor → live pitch)
+// CREATE
 // ============================================================
 
 export const createOffer = async (investorId, data) => {
   const { pitchId, amount, equityRequested, conditions, message, expiresInDays } = data;
 
-  // 1. Load pitch
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
   if (!pitch) throw ApiError.notFound("Pitch not found");
-
-  // 2. Pitch must be live — the business owner's "do not disturb" is off
   if (pitch.status !== "live") {
     throw ApiError.badRequest(`Cannot offer on a ${pitch.status} pitch`);
   }
 
-  // 3. Load business, verify not self
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, pitch.businessId),
     columns: { id: true, ownerId: true, companyName: true },
@@ -113,10 +113,8 @@ export const createOffer = async (investorId, data) => {
     throw ApiError.badRequest("You cannot make an offer on your own business");
   }
 
-  // 4. Rate limit
   enforceLimit(investorId, "create_offer", MAX_OFFERS_PER_DAY);
 
-  // 5. Pre-check existing pending (DB constraint catches the race)
   const existingPending = await db.query.offers.findFirst({
     where: and(
       eq(offers.pitchId, pitchId),
@@ -129,7 +127,6 @@ export const createOffer = async (investorId, data) => {
     throw ApiError.conflict("You already have a pending offer on this pitch");
   }
 
-  // 6. Insert
   const [offer] = await db
     .insert(offers)
     .values({
@@ -147,7 +144,6 @@ export const createOffer = async (investorId, data) => {
     })
     .returning();
 
-  // 7. Notify the business owner — best effort
   const investor = await db.query.users.findFirst({
     where: eq(users.id, investorId),
     columns: { name: true },
@@ -159,13 +155,14 @@ export const createOffer = async (investorId, data) => {
     title: `New offer from ${investor.name}`,
     body: `₹${amount} for ${equityRequested}%`,
     metadata: { offerId: offer.id, pitchId, businessId: business.id },
+    eventId: `offer_created:${offer.id}`,
   });
 
   return offer;
 };
 
 // ============================================================
-// COUNTER (either party, alternating)
+// COUNTER
 // ============================================================
 
 export const counterOffer = async (parentOfferId, userId, data) => {
@@ -176,19 +173,15 @@ export const counterOffer = async (parentOfferId, userId, data) => {
   });
   if (!parent) throw ApiError.notFound("Offer not found");
 
-  // Membership
-  if (parent.investorId !== userId && parent.businessId !== userId) {
-    // Also need to check business owner — the businessId is a business, not a user
-    const biz = await db.query.businesses.findFirst({
-      where: eq(businesses.id, parent.businessId),
-      columns: { ownerId: true },
-    });
-    if (!biz || biz.ownerId !== userId) {
-      throw ApiError.forbidden("You are not part of this offer");
-    }
-  } else if (parent.businessId === userId) {
-    // Edge case: userId happens to equal businessId — impossible, but keep safe.
-    throw ApiError.forbidden("Invalid participant");
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, parent.businessId),
+    columns: { ownerId: true },
+  });
+
+  const isInvestor = parent.investorId === userId;
+  const isOwner = business?.ownerId === userId;
+  if (!isInvestor && !isOwner) {
+    throw ApiError.forbidden("You are not part of this offer");
   }
 
   await assertNotExpired(parent);
@@ -199,7 +192,6 @@ export const counterOffer = async (parentOfferId, userId, data) => {
 
   assertCanCounter(parent, userId);
 
-  // Depth check
   const depth = await getThreadDepth(parent.id);
   if (depth >= OFFER_MAX_COUNTER_DEPTH) {
     throw ApiError.badRequest(
@@ -207,16 +199,8 @@ export const counterOffer = async (parentOfferId, userId, data) => {
     );
   }
 
-  // Determine the OTHER party from parent to notify
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, parent.businessId),
-    columns: { ownerId: true },
-  });
+  const otherUserId = isInvestor ? business.ownerId : parent.investorId;
 
-  const otherUserId =
-    userId === parent.investorId ? business.ownerId : parent.investorId;
-
-  // Atomic: mark parent countered + insert new counter
   const newOffer = await db.transaction(async (tx) => {
     await tx
       .update(offers)
@@ -244,7 +228,6 @@ export const counterOffer = async (parentOfferId, userId, data) => {
     return inserted;
   });
 
-  // Notify the other party
   const actor = await db.query.users.findFirst({
     where: eq(users.id, userId),
     columns: { name: true },
@@ -256,13 +239,14 @@ export const counterOffer = async (parentOfferId, userId, data) => {
     title: `${actor.name} countered your offer`,
     body: `₹${amount} for ${equityRequested}%`,
     metadata: { offerId: newOffer.id, parentOfferId: parent.id, pitchId: parent.pitchId },
+    eventId: `offer_countered:${newOffer.id}`,
   });
 
   return newOffer;
 };
 
 // ============================================================
-// ACCEPT (business owner) — the atomic deal
+// ACCEPT
 // ============================================================
 
 export const acceptOffer = async (offerId, userId) => {
@@ -271,7 +255,6 @@ export const acceptOffer = async (offerId, userId) => {
   });
   if (!offer) throw ApiError.notFound("Offer not found");
 
-  // Load business + verify caller is owner
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, offer.businessId),
     columns: { id: true, ownerId: true, companyName: true },
@@ -287,7 +270,6 @@ export const acceptOffer = async (offerId, userId) => {
     throw ApiError.badRequest(`Cannot accept a ${offer.status} offer`);
   }
 
-  // Load pitch — must still be live
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, offer.pitchId),
   });
@@ -296,9 +278,7 @@ export const acceptOffer = async (offerId, userId) => {
     throw ApiError.badRequest(`Cannot accept an offer on a ${pitch.status} pitch`);
   }
 
-  // ---- THE TRANSACTION ----
   const result = await db.transaction(async (tx) => {
-    // 1. Re-verify offer still pending (in case of race)
     const [current] = await tx
       .select()
       .from(offers)
@@ -308,14 +288,12 @@ export const acceptOffer = async (offerId, userId) => {
       throw ApiError.conflict("Offer is no longer pending");
     }
 
-    // 2. Accept the offer
     const [accepted] = await tx
       .update(offers)
       .set({ status: "accepted", respondedAt: new Date() })
       .where(eq(offers.id, offerId))
       .returning();
 
-    // 3. Reject all sibling pending offers on the same pitch
     const siblings = await tx
       .update(offers)
       .set({ status: "rejected", respondedAt: new Date() })
@@ -328,13 +306,11 @@ export const acceptOffer = async (offerId, userId) => {
       )
       .returning({ id: offers.id, investorId: offers.investorId });
 
-    // 4. Fund the pitch
     await tx
       .update(pitches)
       .set({ status: "funded", closedAt: new Date(), updatedAt: new Date() })
       .where(eq(pitches.id, offer.pitchId));
 
-    // 5. Create the investment
     const investment = await createInvestment(tx, {
       offerId: accepted.id,
       pitchId: accepted.pitchId,
@@ -348,16 +324,12 @@ export const acceptOffer = async (offerId, userId) => {
     return { accepted, siblings, investment };
   });
 
-  // ---- POST-TRANSACTION (best effort, not atomic) ----
-
-  // 6. Auto-create conversation between investor and business owner
   try {
     await getOrCreateConversation(offer.investorId, userId);
   } catch (err) {
     console.error("Failed to create conversation on accept:", err.message);
   }
 
-  // 7. Notify the accepted investor
   await createNotification({
     userId: offer.investorId,
     actorId: userId,
@@ -370,9 +342,9 @@ export const acceptOffer = async (offerId, userId) => {
       pitchId: offer.pitchId,
       businessId: business.id,
     },
+    eventId: `offer_accepted:${offer.id}`,
   });
 
-  // 8. Notify rejected sibling bidders
   await Promise.allSettled(
     result.siblings.map((s) =>
       createNotification({
@@ -381,6 +353,7 @@ export const acceptOffer = async (offerId, userId) => {
         title: `Your offer was not accepted`,
         body: `Another offer was accepted on this pitch`,
         metadata: { offerId: s.id, pitchId: offer.pitchId },
+        eventId: `offer_auto_rejected:${s.id}`,
       })
     )
   );
@@ -389,7 +362,7 @@ export const acceptOffer = async (offerId, userId) => {
 };
 
 // ============================================================
-// REJECT (business owner)
+// REJECT
 // ============================================================
 
 export const rejectOffer = async (offerId, userId) => {
@@ -424,13 +397,14 @@ export const rejectOffer = async (offerId, userId) => {
     type: "offer_rejected",
     title: "Your offer was rejected",
     metadata: { offerId: offer.id, pitchId: offer.pitchId },
+    eventId: `offer_rejected:${offer.id}`,
   });
 
   return updated;
 };
 
 // ============================================================
-// WITHDRAW (investor only)
+// WITHDRAW
 // ============================================================
 
 export const withdrawOffer = async (offerId, userId) => {
@@ -439,7 +413,6 @@ export const withdrawOffer = async (offerId, userId) => {
   });
   if (!offer) throw ApiError.notFound("Offer not found");
 
-  // Only the original investor can withdraw
   if (offer.initiatedById !== userId || offer.investorId !== userId) {
     throw ApiError.forbidden("Only the investor who made this offer can withdraw it");
   }
@@ -456,7 +429,6 @@ export const withdrawOffer = async (offerId, userId) => {
     .where(eq(offers.id, offerId))
     .returning();
 
-  // Notify the business OWNER (not the business entity)
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, offer.businessId),
     columns: { ownerId: true },
@@ -464,11 +436,12 @@ export const withdrawOffer = async (offerId, userId) => {
 
   if (business) {
     await createNotification({
-      userId: business.ownerId,     // ← was offer.businessId (a business UUID)
+      userId: business.ownerId,
       actorId: userId,
       type: "offer_withdrawn",
       title: "An offer was withdrawn",
       metadata: { offerId: offer.id, pitchId: offer.pitchId },
+      eventId: `offer_withdrawn:${offer.id}`,
     });
   }
 
@@ -476,7 +449,7 @@ export const withdrawOffer = async (offerId, userId) => {
 };
 
 // ============================================================
-// READ: single offer
+// READ
 // ============================================================
 
 export const getOffer = async (offerId, userId) => {
@@ -485,7 +458,6 @@ export const getOffer = async (offerId, userId) => {
   });
   if (!offer) throw ApiError.notFound("Offer not found");
 
-  // Membership check — investor or business owner
   if (offer.investorId === userId) return offer;
 
   const business = await db.query.businesses.findFirst({
@@ -498,10 +470,6 @@ export const getOffer = async (offerId, userId) => {
 
   return offer;
 };
-
-// ============================================================
-// READ: my sent offers (as investor)
-// ============================================================
 
 export const getMyOffers = async (investorId, { limit = 20, offset = 0 } = {}) => {
   const rows = await db
@@ -537,12 +505,7 @@ export const getMyOffers = async (investorId, { limit = 20, offset = 0 } = {}) =
   };
 };
 
-// ============================================================
-// READ: offers received on my businesses
-// ============================================================
-
 export const getReceivedOffers = async (businessId, userId, { status, limit = 20, offset = 0 } = {}) => {
-  // Ownership
   const business = await db.query.businesses.findFirst({
     where: eq(businesses.id, businessId),
     columns: { ownerId: true },
@@ -589,12 +552,7 @@ export const getReceivedOffers = async (businessId, userId, { status, limit = 20
   };
 };
 
-// ============================================================
-// READ: full counter thread
-// ============================================================
-
 export const getOfferThread = async (anyOfferId, userId) => {
-  // Walk up to find the root offer
   let rootId = anyOfferId;
   for (let i = 0; i < OFFER_MAX_COUNTER_DEPTH + 2; i++) {
     const row = await db.query.offers.findFirst({
@@ -605,7 +563,6 @@ export const getOfferThread = async (anyOfferId, userId) => {
     rootId = row.parentOfferId;
   }
 
-  // Now walk down: collect all offers with parentOfferId starting from root
   const chain = [];
   let currentId = rootId;
   while (currentId) {
@@ -615,7 +572,6 @@ export const getOfferThread = async (anyOfferId, userId) => {
     if (!offer) break;
     chain.push(offer);
 
-    // Find next offer in chain (the one whose parent is currentId)
     const next = await db.query.offers.findFirst({
       where: eq(offers.parentOfferId, currentId),
     });
@@ -624,7 +580,6 @@ export const getOfferThread = async (anyOfferId, userId) => {
 
   if (chain.length === 0) throw ApiError.notFound("Offer thread not found");
 
-  // Membership check on the root
   const root = chain[0];
   if (root.investorId !== userId) {
     const business = await db.query.businesses.findFirst({
