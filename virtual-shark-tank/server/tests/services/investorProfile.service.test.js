@@ -12,7 +12,6 @@ const createInvestorUser = async (overrides = {}) => {
       name: "Bob Investor",
       email: `inv-${Date.now()}-${Math.random()}@example.com`,
       passwordHash: "$2b$12$fake",
-      role: "investor",
       ...overrides,
     })
     .returning();
@@ -136,10 +135,9 @@ describe("investorProfile.service", () => {
         maxTicketSize: 5000000,
       });
       const result = await service.completeInvestorProfile(user.id);
-      expect(result.isProfileComplete).toBe(true);
-
-      const [u] = await db.select().from(users).where(eq(users.id, user.id));
-      expect(u.isProfileComplete).toBe(true);
+      expect(result.isComplete).toBe(true);
+const [p] = await db.select().from(investorProfiles).where(eq(investorProfiles.userId, user.id));
+expect(p.isComplete).toBe(true);
     });
 
     it("is idempotent", async () => {

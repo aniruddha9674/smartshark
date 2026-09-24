@@ -99,6 +99,30 @@ InvestorProfile: {
     isIdentityVerified: { type: "boolean", example: false },
   },
 },
+Business: {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    ownerId: { type: "string", format: "uuid" },
+    companyName: { type: "string", nullable: true },
+    sector: { type: "string", nullable: true },
+    city: { type: "string", nullable: true },
+    description: { type: "string", nullable: true },
+    udyamNumber: { type: "string", nullable: true },
+    gstNumber: { type: "string", nullable: true },
+    shopActLicense: { type: "string", nullable: true },
+    verificationTier: {
+      type: "string",
+      enum: ["unverified", "basic", "verified"],
+      example: "unverified",
+    },
+    fundingAsk: { type: "string", nullable: true, example: "5000000" },
+    yearsOperating: { type: "integer", nullable: true },
+    isProfileComplete: { type: "boolean", example: false },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
+},
 Pitch: {
   type: "object",
   properties: {

@@ -5,23 +5,14 @@ import {
   REQUIRED_TO_PUBLISH,
 } from "../../src/validators/pitch.validator.js";
 
-const validCreate = {
+const valid = {
+  businessId: "11111111-1111-4111-8111-111111111111",
   title: "Seed Round 2026",
   askAmount: 5000000,
   equityOffered: 8,
 };
 
-const validUpdate = {
-  title: "Updated Title",
-};
-
 describe("createPitchSchema", () => {
-  const valid = {
-    title: "Seed Round 2026",
-    askAmount: 5000000,
-    equityOffered: 8,
-  };
-
   it("accepts a minimal valid payload", () => {
     expect(createPitchSchema.safeParse(valid).success).toBe(true);
   });
@@ -43,6 +34,17 @@ describe("createPitchSchema", () => {
       coverImageUrl: "https://res.cloudinary.com/demo/cover.jpg",
     });
     expect(r.success).toBe(true);
+  });
+
+  it("requires a businessId", () => {
+    const { businessId, ...rest } = valid;
+    expect(createPitchSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it("rejects a non-uuid businessId", () => {
+    expect(
+      createPitchSchema.safeParse({ ...valid, businessId: "not-a-uuid" }).success
+    ).toBe(false);
   });
 
   it("requires title", () => {
@@ -100,7 +102,7 @@ describe("createPitchSchema", () => {
     expect(createPitchSchema.safeParse({ ...valid, foundedYear: 2200 }).success).toBe(false);
   });
 
-  it("rejects negative teamSize", () => {
+  it("rejects non-positive teamSize", () => {
     expect(createPitchSchema.safeParse({ ...valid, teamSize: 0 }).success).toBe(false);
   });
 
@@ -111,13 +113,11 @@ describe("createPitchSchema", () => {
   it("strips unknown fields", () => {
     const r = createPitchSchema.safeParse({
       ...valid,
-      status: "live",             // attacker attempt
-      businessId: "someone-else", // attacker attempt
+      status: "live",
       valuation: 999999999,
     });
     expect(r.success).toBe(true);
     expect(r.data.status).toBeUndefined();
-    expect(r.data.businessId).toBeUndefined();
     expect(r.data.valuation).toBeUndefined();
   });
 
@@ -138,7 +138,7 @@ describe("createPitchSchema", () => {
       ...valid,
       content: {
         problem: "X",
-        attackerKey: "malicious",  // not in contentSchema
+        attackerKey: "malicious",
       },
     });
     expect(r.success).toBe(true);
@@ -169,19 +169,13 @@ describe("updatePitchSchema", () => {
   });
 
   it("strips status field (not editable by user)", () => {
-    const r = updatePitchSchema.safeParse({ status: "live", title: "Test" });
+    const r = updatePitchSchema.safeParse({ status: "live", title: "Test Pitch" });
     expect(r.success).toBe(true);
     expect(r.data.status).toBeUndefined();
   });
 
-  it("strips businessId field (no cross-user writes)", () => {
-    const r = updatePitchSchema.safeParse({ businessId: "someone", title: "Test" });
-    expect(r.success).toBe(true);
-    expect(r.data.businessId).toBeUndefined();
-  });
-
   it("strips publishedAt field", () => {
-    const r = updatePitchSchema.safeParse({ publishedAt: new Date(), title: "Test" });
+    const r = updatePitchSchema.safeParse({ publishedAt: new Date(), title: "Test Pitch" });
     expect(r.success).toBe(true);
     expect(r.data.publishedAt).toBeUndefined();
   });

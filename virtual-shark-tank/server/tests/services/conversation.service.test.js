@@ -17,7 +17,6 @@ const createUser = async (overrides = {}) => {
       name: `User ${Math.random().toString(36).slice(2, 7)}`,
       email: `u-${Date.now()}-${Math.random()}@example.com`,
       passwordHash: "$2b$12$fake",
-      role: "investor",
       ...overrides,
     })
     .returning();

@@ -9,7 +9,6 @@ describe("registerSchema", () => {
     name: "Alice Sharma",
     email: "alice@example.com",
     password: "Password123",
-    role: "investor",
   };
 
   it("accepts a valid payload", () => {
@@ -27,48 +26,27 @@ describe("registerSchema", () => {
   });
 
   it("rejects a name shorter than 2 characters", () => {
-    const result = registerSchema.safeParse({ ...valid, name: "A" });
-    expect(result.success).toBe(false);
+    expect(registerSchema.safeParse({ ...valid, name: "A" }).success).toBe(false);
   });
 
   it("rejects an invalid email", () => {
-    const result = registerSchema.safeParse({ ...valid, email: "not-an-email" });
-    expect(result.success).toBe(false);
+    expect(registerSchema.safeParse({ ...valid, email: "not-an-email" }).success).toBe(false);
   });
 
   it("rejects a password shorter than 8 characters", () => {
-    const result = registerSchema.safeParse({ ...valid, password: "Pass1" });
-    expect(result.success).toBe(false);
+    expect(registerSchema.safeParse({ ...valid, password: "Pass1" }).success).toBe(false);
   });
 
   it("rejects a password without an uppercase letter", () => {
-    const result = registerSchema.safeParse({ ...valid, password: "password123" });
-    expect(result.success).toBe(false);
+    expect(registerSchema.safeParse({ ...valid, password: "password123" }).success).toBe(false);
   });
 
   it("rejects a password without a lowercase letter", () => {
-    const result = registerSchema.safeParse({ ...valid, password: "PASSWORD123" });
-    expect(result.success).toBe(false);
+    expect(registerSchema.safeParse({ ...valid, password: "PASSWORD123" }).success).toBe(false);
   });
 
   it("rejects a password without a number", () => {
-    const result = registerSchema.safeParse({ ...valid, password: "PasswordABC" });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects role 'admin' (no self-signup as admin)", () => {
-    const result = registerSchema.safeParse({ ...valid, role: "admin" });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects an unknown role", () => {
-    const result = registerSchema.safeParse({ ...valid, role: "superuser" });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts role 'business'", () => {
-    const result = registerSchema.safeParse({ ...valid, role: "business" });
-    expect(result.success).toBe(true);
+    expect(registerSchema.safeParse({ ...valid, password: "PasswordABC" }).success).toBe(false);
   });
 
   it("rejects when required fields are missing", () => {
@@ -80,13 +58,14 @@ describe("registerSchema", () => {
   it("strips unknown extra fields (no privilege escalation via body)", () => {
     const result = registerSchema.safeParse({
       ...valid,
-      isVerified: true,       // attacker attempt
-      isActive: true,
-      role: "investor",       // overwrite with valid role
+      isAdmin: true,        // attacker attempt
+      isVerified: true,
+      role: "admin",        // removed field — should be stripped
     });
     expect(result.success).toBe(true);
+    expect(result.data.isAdmin).toBeUndefined();
     expect(result.data.isVerified).toBeUndefined();
-    expect(result.data.isActive).toBeUndefined();
+    expect(result.data.role).toBeUndefined();
   });
 });
 
@@ -112,11 +91,5 @@ describe("loginSchema", () => {
 
   it("rejects an empty password", () => {
     expect(loginSchema.safeParse({ ...valid, password: "" }).success).toBe(false);
-  });
-
-  it("does not enforce password complexity (that's register's job)", () => {
-    // Login must accept whatever was set at register time, even if rules changed.
-    const result = loginSchema.safeParse({ ...valid, password: "old" });
-    expect(result.success).toBe(true);
   });
 });

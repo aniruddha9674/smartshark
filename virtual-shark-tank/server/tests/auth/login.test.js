@@ -8,7 +8,6 @@ const user = {
   name: "Alice Sharma",
   email: "alice@example.com",
   password: "Password123",
-  role: "investor",
 };
 
 // Helper: register a user so login tests have something to work with
@@ -34,7 +33,8 @@ describe("POST /api/auth/login", () => {
 
     expect(res.body.user).toBeDefined();
     expect(res.body.user.email).toBe(user.email);
-    expect(res.body.user.role).toBe("investor");
+    expect(res.body.user.capabilities).toBeDefined();
+expect(res.body.user.capabilities.isInvestor).toBe(false);
     expect(res.body.accessToken).toBeDefined();
   });
 

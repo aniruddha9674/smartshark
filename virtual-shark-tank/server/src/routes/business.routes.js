@@ -1,65 +1,52 @@
 import { Router } from "express";
-import * as businessProfileController from "../controllers/businessProfile.controller.js";
+import * as businessController from "../controllers/businessProfile.controller.js";
 import { validate } from "../middleware/validate.middleware.js";
-import { updateBusinessProfileSchema } from "../validators/businessProfile.validator.js";
-import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import {
+  createBusinessSchema,
+  updateBusinessProfileSchema,
+} from "../validators/businessProfile.validator.js";
+import { requireAuth } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
 
-// Every route in this router requires an authenticated business user
-router.use(requireAuth, requireRole("business"));
+router.use(requireAuth);
 
 /**
  * @openapi
- * /api/business/me:
+ * /api/businesses:
  *   get:
- *     tags: [Business Profile]
- *     summary: Get the current business's profile
- *     description: Returns the business profile for the authenticated business user. Requires role=business.
+ *     tags: [Business]
+ *     summary: List businesses I own
+ *     description: Returns all businesses owned by the authenticated user. A user can own multiple.
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Business profile
+ *         description: My businesses
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 profile:
- *                   $ref: '#/components/schemas/BusinessProfile'
+ *                 businesses:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/Business' }
  *       401:
- *         description: No token or invalid token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       403:
- *         description: Not a business user
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       404:
- *         description: Profile not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Not authenticated
  */
-router.get("/me", asyncHandler(businessProfileController.getMe));
+router.get("/", asyncHandler(businessController.listMine));
 
 /**
  * @openapi
- * /api/business/me:
- *   patch:
- *     tags: [Business Profile]
- *     summary: Update the current business's profile
+ * /api/businesses:
+ *   post:
+ *     tags: [Business]
+ *     summary: Create a new business
  *     description: |
- *       Partial update — send only the fields you want to change.
- *       Every change is written to `profile_edit_history` for auditing.
- *       Unknown fields (like `verificationTier` or `userId`) are stripped.
+ *       Creates a business owned by the authenticated user.
+ *       A user can own multiple businesses.
+ *       Required: companyName.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -68,84 +55,135 @@ router.get("/me", asyncHandler(businessProfileController.getMe));
  *         application/json:
  *           schema:
  *             type: object
- *             minProperties: 1
+ *             required: [companyName]
  *             properties:
- *               companyName:
- *                 type: string
- *                 minLength: 2
- *                 maxLength: 255
- *                 example: Acme Pvt Ltd
- *               sector:
- *                 type: string
- *                 example: SaaS
- *               city:
- *                 type: string
- *                 example: Bangalore
- *               description:
- *                 type: string
- *                 example: We build B2B SaaS tools for Indian SMEs.
- *               fundingAsk:
- *                 type: number
- *                 example: 5000000
- *               yearsOperating:
- *                 type: integer
- *                 example: 3
- *               udyamNumber:
- *                 type: string
- *                 nullable: true
- *                 example: UDYAM-KA-01-0012345
- *               gstNumber:
- *                 type: string
- *                 nullable: true
- *                 example: 29ABCDE1234F1Z5
- *               shopActLicense:
- *                 type: string
- *                 nullable: true
+ *               companyName: { type: string, example: Acme Pvt Ltd }
+ *               sector: { type: string, example: SaaS }
+ *               city: { type: string, example: Bangalore }
+ *               description: { type: string }
+ *               fundingAsk: { type: number, example: 5000000 }
+ *               yearsOperating: { type: integer, example: 3 }
  *     responses:
- *       200:
- *         description: Updated profile
+ *       201:
+ *         description: Business created
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 profile:
- *                   $ref: '#/components/schemas/BusinessProfile'
+ *                 business: { $ref: '#/components/schemas/Business' }
  *       400:
- *         description: Validation failed (e.g. empty body, negative fundingAsk)
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Validation failed
  *       401:
  *         description: Not authenticated
- *       403:
- *         description: Not a business user
- *       404:
- *         description: Profile not found
  */
-router.patch(
-  "/me",
-  validate(updateBusinessProfileSchema),
-  asyncHandler(businessProfileController.updateMe)
+router.post(
+  "/",
+  validate(createBusinessSchema),
+  asyncHandler(businessController.create)
 );
 
 /**
  * @openapi
- * /api/business/complete:
- *   post:
- *     tags: [Business Profile]
- *     summary: Mark the business profile as complete
- *     description: |
- *       Validates that all required fields are present, then sets
- *       `users.isProfileComplete = true`. Once complete, the business
- *       can publish pitches and appears live on the platform.
- *
- *       Required fields: companyName, sector, city, description, fundingAsk, yearsOperating.
- *
- *       This endpoint is idempotent — calling it multiple times is safe.
+ * /api/businesses/{id}:
+ *   get:
+ *     tags: [Business]
+ *     summary: Get one business
+ *     description: Returns a business. Only the owner can access it.
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Business
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 business: { $ref: '#/components/schemas/Business' }
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Not the owner
+ *       404:
+ *         description: Business not found
+ */
+router.get("/:id", asyncHandler(businessController.getOne));
+
+/**
+ * @openapi
+ * /api/businesses/{id}:
+ *   patch:
+ *     tags: [Business]
+ *     summary: Update a business
+ *     description: |
+ *       Partial update. Only the owner can update.
+ *       Every change is recorded in `profile_edit_history`.
+ *       Unknown fields are stripped.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             minProperties: 1
+ *             properties:
+ *               companyName: { type: string }
+ *               sector: { type: string }
+ *               city: { type: string }
+ *               description: { type: string }
+ *               fundingAsk: { type: number }
+ *               yearsOperating: { type: integer }
+ *               udyamNumber: { type: string, nullable: true }
+ *               gstNumber: { type: string, nullable: true }
+ *               shopActLicense: { type: string, nullable: true }
+ *     responses:
+ *       200:
+ *         description: Updated business
+ *       400:
+ *         description: Validation failed
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Not the owner
+ *       404:
+ *         description: Business not found
+ */
+router.patch(
+  "/:id",
+  validate(updateBusinessProfileSchema),
+  asyncHandler(businessController.update)
+);
+
+/**
+ * @openapi
+ * /api/businesses/{id}/complete:
+ *   post:
+ *     tags: [Business]
+ *     summary: Mark a business profile as complete
+ *     description: |
+ *       Validates required fields, then sets `isProfileComplete = true` on the business.
+ *       Required: companyName, sector, city, description, fundingAsk, yearsOperating.
+ *       Idempotent.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
  *         description: Profile marked complete
@@ -154,68 +192,42 @@ router.patch(
  *             schema:
  *               type: object
  *               properties:
- *                 isProfileComplete:
- *                   type: boolean
- *                   example: true
+ *                 isProfileComplete: { type: boolean }
  *       400:
- *         description: Profile is missing required fields
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 error:
- *                   type: string
- *                   example: Profile incomplete
- *                 details:
- *                   type: object
- *                   properties:
- *                     missingFields:
- *                       type: array
- *                       items:
- *                         type: string
- *                       example: [companyName, sector, fundingAsk]
+ *         description: Profile incomplete (missingFields in details)
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not a business user
+ *         description: Not the owner
  *       404:
- *         description: Profile not found
+ *         description: Business not found
  */
-router.post(
-  "/complete",
-  asyncHandler(businessProfileController.complete)
-);
+router.post("/:id/complete", asyncHandler(businessController.complete));
 
 /**
  * @openapi
- * /api/business/history:
+ * /api/businesses/{id}/history:
  *   get:
- *     tags: [Business Profile]
- *     summary: Get the business's profile edit history
- *     description: Returns a reverse-chronological list of every field change made to the business profile. Powers the History tab.
+ *     tags: [Business]
+ *     summary: Get a business's profile edit history
+ *     description: Reverse-chronological list of profile changes. Only the owner can view.
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Profile edit history, newest first
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 history:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/ProfileEdit'
+ *         description: Edit history
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not a business user
+ *         description: Not the owner
+ *       404:
+ *         description: Business not found
  */
-router.get(
-  "/history",
-  asyncHandler(businessProfileController.getHistory)
-);
+router.get("/:id/history", asyncHandler(businessController.getHistory));
 
 export default router;

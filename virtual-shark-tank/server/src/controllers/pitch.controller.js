@@ -2,14 +2,18 @@ import * as pitchService from "../services/pitch.service.js";
 
 // POST /api/pitches — business creates a draft
 export const create = async (req, res) => {
-  const pitch = await pitchService.createPitch(req.user.id, req.body);
+  const { businessId, ...rest } = req.body;
+  const pitch = await pitchService.createPitch(businessId, req.user.id, rest);
   res.status(201).json({ pitch });
 };
 
-// GET /api/pitches/me — business lists own pitches
 export const listMine = async (req, res) => {
-  const pitches = await pitchService.getMyPitches(req.user.id);
-  res.json({ pitches });
+  const { businessId } = req.query;
+  if (!businessId) {
+    return res.status(400).json({ error: "businessId query param required" });
+  }
+  const pitchList = await pitchService.getMyPitches(businessId, req.user.id);
+  res.json({ pitches: pitchList });
 };
 
 // GET /api/pitches/:id — owner or anyone (if live)
@@ -48,10 +52,11 @@ export const remove = async (req, res) => {
 
 // GET /api/pitches — investor browse (live only, with filters)
 export const listLive = async (req, res) => {
-  const { stage, revenueRange, limit, offset } = req.query;
+  const { stage, revenueRange, businessId, limit, offset } = req.query;
   const pitches = await pitchService.listLivePitches({
     stage,
     revenueRange,
+    businessId,
     limit,
     offset,
   });

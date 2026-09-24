@@ -1,8 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
 import {
-  users,
-  businessProfiles,
+  businesses,
   profileEditHistory,
 } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
@@ -21,25 +20,56 @@ const FIELD_TYPES = {
   shopActLicense: "string",
 };
 
-// ---------- Read ----------
-export const getBusinessProfile = async (userId) => {
-  const profile = await db.query.businessProfiles.findFirst({
-    where: eq(businessProfiles.userId, userId),
+// ---------- Ownership guard ----------
+const assertOwnership = async (businessId, userId) => {
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
+    columns: { id: true, ownerId: true },
   });
+  if (!business) throw ApiError.notFound("Business not found");
+  if (business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this business");
+  }
+  return business;
+};
 
-  if (!profile) throw ApiError.notFound("Business profile not found");
-  return profile;
+// ---------- Read one ----------
+export const getBusiness = async (businessId, userId) => {
+  await assertOwnership(businessId, userId);
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
+  });
+  return business;
+};
+
+// ---------- List my businesses ----------
+export const listMyBusinesses = async (userId) => {
+  return await db.query.businesses.findMany({
+    where: eq(businesses.ownerId, userId),
+    orderBy: (b, { desc }) => [desc(b.createdAt)],
+  });
+};
+
+// ---------- Create ----------
+export const createBusiness = async (userId, data) => {
+  const [business] = await db
+    .insert(businesses)
+    .values({
+      ownerId: userId,
+      ...data,
+    })
+    .returning();
+  return business;
 };
 
 // ---------- Update (with audit) ----------
-export const updateBusinessProfile = async (userId, editorId, changes) => {
-  const current = await db.query.businessProfiles.findFirst({
-    where: eq(businessProfiles.userId, userId),
+export const updateBusiness = async (businessId, userId, changes) => {
+  await assertOwnership(businessId, userId);
+
+  const current = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
   });
 
-  if (!current) throw ApiError.notFound("Business profile not found");
-
-  // Diff — only record fields whose value actually changed
   const auditRows = [];
   const updates = {};
 
@@ -51,8 +81,8 @@ export const updateBusinessProfile = async (userId, editorId, changes) => {
     if (oldStr !== newStr) {
       updates[field] = newValue;
       auditRows.push({
-        businessId: userId,
-        editedById: editorId,
+        businessId,
+        editedById: userId,
         fieldName: field,
         oldValue: oldStr,
         newValue: newStr,
@@ -61,15 +91,13 @@ export const updateBusinessProfile = async (userId, editorId, changes) => {
     }
   }
 
-  // No actual changes — return current state, no writes
   if (auditRows.length === 0) return current;
 
-  // Profile update + audit rows must succeed or fail together
   return await db.transaction(async (tx) => {
     const [updated] = await tx
-      .update(businessProfiles)
+      .update(businesses)
       .set({ ...updates, updatedAt: new Date() })
-      .where(eq(businessProfiles.userId, userId))
+      .where(eq(businesses.id, businessId))
       .returning();
 
     await tx.insert(profileEditHistory).values(auditRows);
@@ -79,16 +107,15 @@ export const updateBusinessProfile = async (userId, editorId, changes) => {
 };
 
 // ---------- Complete profile ----------
-export const completeBusinessProfile = async (userId) => {
-  const profile = await db.query.businessProfiles.findFirst({
-    where: eq(businessProfiles.userId, userId),
+export const completeBusiness = async (businessId, userId) => {
+  await assertOwnership(businessId, userId);
+
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
   });
 
-  if (!profile) throw ApiError.notFound("Business profile not found");
-
-  // Which required fields are missing or null?
   const missing = REQUIRED_PROFILE_FIELDS.filter((field) => {
-    const value = profile[field];
+    const value = business[field];
     return value === null || value === undefined || value === "";
   });
 
@@ -96,19 +123,20 @@ export const completeBusinessProfile = async (userId) => {
     throw ApiError.badRequest("Profile incomplete", { missingFields: missing });
   }
 
-  // Idempotent — calling twice is fine
   await db
-    .update(users)
+    .update(businesses)
     .set({ isProfileComplete: true, updatedAt: new Date() })
-    .where(eq(users.id, userId));
+    .where(eq(businesses.id, businessId));
 
   return { isProfileComplete: true };
 };
 
 // ---------- Edit history ----------
-export const getBusinessProfileHistory = async (userId, limit = 50) => {
+export const getBusinessHistory = async (businessId, userId, limit = 50) => {
+  await assertOwnership(businessId, userId);
+
   return await db.query.profileEditHistory.findMany({
-    where: eq(profileEditHistory.businessId, userId),
+    where: eq(profileEditHistory.businessId, businessId),
     orderBy: (h, { desc }) => [desc(h.changedAt)],
     limit,
   });

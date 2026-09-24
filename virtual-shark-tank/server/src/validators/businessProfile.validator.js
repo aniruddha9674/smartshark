@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+export const createBusinessSchema = z.object({
+  companyName: z.string().min(2).max(255),
+  sector: z.string().min(2).max(100).optional(),
+  city: z.string().min(2).max(100).optional(),
+  description: z.string().min(10).max(2000).optional(),
+  fundingAsk: z.coerce.number().positive().optional(),
+  yearsOperating: z.coerce.number().int().min(0).max(100).optional(),
+  udyamNumber: z.string().max(50).optional().nullable(),
+  gstNumber: z.string().max(50).optional().nullable(),
+  shopActLicense: z.string().max(50).optional().nullable(),
+});
+
 // Fields a business user can update. Every field is optional (PATCH semantics).
 export const updateBusinessProfileSchema = z.object({
   companyName: z.string().min(2).max(255).optional(),

@@ -8,7 +8,6 @@ const validPayload = {
   name: "Alice Sharma",
   email: "alice@example.com",
   password: "Password123",
-  role: "investor",
 };
 
 describe("POST /api/auth/register", () => {
@@ -26,7 +25,9 @@ describe("POST /api/auth/register", () => {
     expect(res.body.user).toBeDefined();
     expect(res.body.user.email).toBe("alice@example.com");
     expect(res.body.user.name).toBe("Alice Sharma");
-    expect(res.body.user.role).toBe("investor");
+    expect(res.body.user.capabilities).toBeDefined();
+expect(res.body.user.capabilities.hasBusiness).toBe(false);
+expect(res.body.user.capabilities.isInvestor).toBe(false);
     expect(res.body.accessToken).toBeDefined();
     expect(typeof res.body.accessToken).toBe("string");
   });
@@ -58,15 +59,17 @@ describe("POST /api/auth/register", () => {
   });
 
   it("defaults new users to unverified and active", async () => {
-    const res = await request(app)
-      .post("/api/auth/register")
-      .send(validPayload)
-      .expect(201);
+  const res = await request(app)
+    .post("/api/auth/register")
+    .send(validPayload)
+    .expect(201);
 
-    expect(res.body.user.isVerified).toBe(false);
-    expect(res.body.user.isActive).toBe(true);
-    expect(res.body.user.isProfileComplete).toBe(false);
-  });
+  expect(res.body.user.isVerified).toBe(false);
+  expect(res.body.user.isActive).toBe(true);
+  expect(res.body.user.isAdmin).toBe(false);
+  // isProfileComplete removed — now per-business
+  expect(res.body.user.capabilities).toBeDefined();
+});
 
   it("returns 409 when the email already exists", async () => {
     await request(app).post("/api/auth/register").send(validPayload).expect(201);
@@ -107,14 +110,16 @@ describe("POST /api/auth/register", () => {
     expect(res.body.error).toBe("Validation failed");
   });
 
-  it("rejects role 'admin' (no self-signup as admin)", async () => {
-    const res = await request(app)
-      .post("/api/auth/register")
-      .send({ ...validPayload, role: "admin" })
-      .expect(400);
+ it("ignores a role field if sent (role no longer exists)", async () => {
+  const res = await request(app)
+    .post("/api/auth/register")
+    .send({ ...validPayload, role: "admin" })
+    .expect(201);
 
-    expect(res.body.error).toBe("Validation failed");
-  });
+  // zod strips unknown fields — role is silently ignored
+  expect(res.body.user.isAdmin).toBe(false);
+  expect(res.body.user.role).toBeUndefined();
+});
 
   it("strips unknown fields from the body", async () => {
     const res = await request(app)

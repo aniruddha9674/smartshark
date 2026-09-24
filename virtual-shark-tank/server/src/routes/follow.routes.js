@@ -7,7 +7,6 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
 
-// Every route requires authentication
 router.use(requireAuth);
 
 /**
@@ -15,8 +14,8 @@ router.use(requireAuth);
  * /api/follows/following:
  *   get:
  *     tags: [Follows]
- *     summary: List users I follow
- *     description: Returns the users the authenticated user follows, newest first. Each entry is enriched with the user's role-specific profile (business or investor).
+ *     summary: List everything I follow (businesses + investors)
+ *     description: Returns a mixed list of businesses and investors the authenticated user follows, newest first.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -28,18 +27,16 @@ router.use(requireAuth);
  *         schema: { type: integer, default: 0 }
  *     responses:
  *       200:
- *         description: Paginated list of followed users
+ *         description: Paginated list
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 users:
+ *                 following:
  *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/FollowedUser'
- *                 pagination:
- *                   $ref: '#/components/schemas/Pagination'
+ *                   items: { type: object }
+ *                 pagination: { $ref: '#/components/schemas/Pagination' }
  *       401:
  *         description: Not authenticated
  */
@@ -51,152 +48,172 @@ router.get(
 
 /**
  * @openapi
- * /api/follows/followers:
+ * /api/follows/investor/followers:
  *   get:
  *     tags: [Follows]
- *     summary: List users who follow me
- *     description: Returns the users following the authenticated user, newest first. Enriched per role.
+ *     summary: Who follows me (as an investor)
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: limit
- *         schema: { type: integer, default: 20, maximum: 100 }
- *       - in: query
- *         name: offset
- *         schema: { type: integer, default: 0 }
  *     responses:
  *       200:
- *         description: Paginated list of followers
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 users:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/FollowedUser'
- *                 pagination:
- *                   $ref: '#/components/schemas/Pagination'
+ *         description: List of followers
  *       401:
  *         description: Not authenticated
  */
 router.get(
-  "/followers",
+  "/investor/followers",
   validate(paginationQuerySchema, "query"),
-  asyncHandler(followController.getFollowers)
+  asyncHandler(followController.getInvestorFollowers)
 );
 
 /**
  * @openapi
- * /api/follows/status/{userId}:
+ * /api/follows/status/business/{id}:
  *   get:
  *     tags: [Follows]
- *     summary: Check if I follow a user
- *     description: Returns whether the authenticated user follows the specified user.
+ *     summary: Am I following this business?
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: userId
+ *         name: id
  *         required: true
  *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Follow status
+ *         description: Status
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 following: { type: boolean }
- *       401:
- *         description: Not authenticated
  */
-router.get(
-  "/status/:userId",
-  asyncHandler(followController.getStatus)
-);
+router.get("/status/business/:id", asyncHandler(followController.getBusinessStatus));
 
 /**
  * @openapi
- * /api/follows/{userId}:
- *   post:
+ * /api/follows/status/investor/{id}:
+ *   get:
  *     tags: [Follows]
- *     summary: Follow a user
- *     description: |
- *       Creates a follow relationship. Idempotent — following the same user
- *       twice returns success without creating a duplicate.
- *
- *       Rules:
- *       - Cannot follow yourself (400)
- *       - Cannot follow an inactive user (400)
- *       - Cannot follow a nonexistent user (404)
- *
- *       Creates a `follow` notification for the target user, respecting their
- *       `notifyFollow` preference.
+ *     summary: Am I following this investor?
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: userId
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Status
+ */
+router.get("/status/investor/:id", asyncHandler(followController.getInvestorStatus));
+
+/**
+ * @openapi
+ * /api/follows/business/{id}:
+ *   post:
+ *     tags: [Follows]
+ *     summary: Follow a business
+ *     description: Idempotent. Cannot follow a business you own.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
  *         required: true
  *         schema: { type: string, format: uuid }
  *     responses:
  *       201:
- *         description: Follow created (or was already following)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 following: { type: boolean, example: true }
- *                 alreadyFollowing: { type: boolean, example: false }
+ *         description: Followed
  *       400:
- *         description: Cannot follow yourself, or target is inactive
+ *         description: Cannot follow your own business
  *       401:
  *         description: Not authenticated
  *       404:
- *         description: User not found
- */
-router.post(
-  "/:userId",
-  asyncHandler(followController.follow)
-);
-
-/**
- * @openapi
- * /api/follows/{userId}:
+ *         description: Business not found
  *   delete:
  *     tags: [Follows]
- *     summary: Unfollow a user
- *     description: Removes the follow relationship. Idempotent — unfollowing someone you don't follow succeeds without error.
+ *     summary: Unfollow a business
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: userId
+ *         name: id
  *         required: true
  *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
  *         description: Unfollowed
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 following: { type: boolean, example: false }
- *                 wasFollowing: { type: boolean, example: true }
+ */
+router.post("/business/:id", asyncHandler(followController.followBusiness));
+router.delete("/business/:id", asyncHandler(followController.unfollowBusiness));
+
+/**
+ * @openapi
+ * /api/follows/business/{id}/followers:
+ *   get:
+ *     tags: [Follows]
+ *     summary: Who follows a business
+ *     description: Only the business owner can see their followers.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Followers list
+ *       403:
+ *         description: You do not own this business
+ */
+router.get(
+  "/business/:id/followers",
+  validate(paginationQuerySchema, "query"),
+  asyncHandler(followController.getBusinessFollowers)
+);
+
+/**
+ * @openapi
+ * /api/follows/investor/{id}:
+ *   post:
+ *     tags: [Follows]
+ *     summary: Follow an investor
+ *     description: Idempotent. Target must have an investor profile. Cannot follow yourself.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       201:
+ *         description: Followed
  *       400:
- *         description: Cannot unfollow yourself
+ *         description: Cannot follow yourself or non-investor
  *       401:
  *         description: Not authenticated
+ *       404:
+ *         description: User not found
+ *   delete:
+ *     tags: [Follows]
+ *     summary: Unfollow an investor
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Unfollowed
  */
-router.delete(
-  "/:userId",
-  asyncHandler(followController.unfollow)
-);
+router.post("/investor/:id", asyncHandler(followController.followInvestor));
+router.delete("/investor/:id", asyncHandler(followController.unfollowInvestor));
 
 export default router;

@@ -2,25 +2,33 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../../src/app.js";
 import { db } from "../../src/config/db.postgres.js";
-import {
-  users,
-  businessProfiles,
-  investorProfiles,
-  notifications,
-} from "../../src/models/postgres/index.js";
+import { users } from "../../src/models/postgres/index.js";
 
-const registerUser = async (role = "business") => {
-  const email = `t-${role}-${Date.now()}-${Math.random()}@example.com`;
+const registerUser = async () => {
+  const email = `t-${Date.now()}-${Math.random()}@example.com`;
   const res = await request(app)
     .post("/api/auth/register")
-    .send({ name: `Test ${role}`, email, password: "Password123", role })
+    .send({ name: `User ${Math.random().toString(36).slice(2, 6)}`, email, password: "Password123" })
     .expect(201);
-  if (role === "business") {
-    await db.insert(businessProfiles).values({ userId: res.body.user.id, companyName: "Acme" });
-  } else {
-    await db.insert(investorProfiles).values({ userId: res.body.user.id, firmName: "Peak" });
-  }
   return { user: res.body.user, token: res.body.accessToken };
+};
+
+const createBusiness = async (token, data = {}) => {
+  const res = await request(app)
+    .post("/api/businesses")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ companyName: "Acme", ...data })
+    .expect(201);
+  return res.body.business;
+};
+
+const createInvestor = async () => {
+  const { user, token } = await registerUser();
+  await request(app)
+    .post("/api/investor/me")
+    .set("Authorization", `Bearer ${token}`)
+    .expect(201);
+  return { user, token };
 };
 
 describe("Follow endpoints", () => {
@@ -28,260 +36,262 @@ describe("Follow endpoints", () => {
     await db.delete(users);
   });
 
-  // ---------- POST /:userId ----------
-  describe("POST /api/follows/:userId", () => {
-    it("follows a user", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+  describe("POST /api/follows/business/:id", () => {
+    it("follows a business", async () => {
+      const follower = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
 
       const res = await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(201);
-
       expect(res.body.following).toBe(true);
-      expect(res.body.alreadyFollowing).toBe(false);
     });
 
-    it("is idempotent on duplicate follow", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+    it("is idempotent", async () => {
+      const follower = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
 
       await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(201);
 
       const res = await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(201);
-
       expect(res.body.alreadyFollowing).toBe(true);
     });
 
-    it("rejects self-follow (400)", async () => {
-      const a = await registerUser("investor");
+    it("400 for following your own business", async () => {
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+
       await request(app)
-        .post(`/api/follows/${a.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${owner.token}`)
         .expect(400);
     });
 
-    it("rejects following a nonexistent user (404)", async () => {
-      const a = await registerUser("investor");
+    it("404 for nonexistent business", async () => {
+      const follower = await registerUser();
       const fake = "00000000-0000-0000-0000-000000000000";
+
       await request(app)
-        .post(`/api/follows/${fake}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${fake}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(404);
     });
 
-    it("rejects unauthenticated (401)", async () => {
-      const a = await registerUser("investor");
-      await request(app).post(`/api/follows/${a.user.id}`).expect(401);
-    });
-
-    it("creates a notification for the target", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
-
-      await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
-        .expect(201);
-
-      const notifs = await db.select().from(notifications);
-      expect(notifs.length).toBe(1);
-      expect(notifs[0].type).toBe("follow");
-      expect(notifs[0].userId).toBe(b.user.id);
+    it("401 without auth", async () => {
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+      await request(app).post(`/api/follows/business/${biz.id}`).expect(401);
     });
   });
 
-  // ---------- DELETE /:userId ----------
-  describe("DELETE /api/follows/:userId", () => {
-    it("unfollows a user", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+  describe("DELETE /api/follows/business/:id", () => {
+    it("unfollows a business", async () => {
+      const follower = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
 
       await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(201);
 
       const res = await request(app)
-        .delete(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .delete(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(200);
-
-      expect(res.body.following).toBe(false);
       expect(res.body.wasFollowing).toBe(true);
     });
 
-    it("is idempotent when not following", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+    it("idempotent when not following", async () => {
+      const follower = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
 
       const res = await request(app)
-        .delete(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .delete(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(200);
-
       expect(res.body.wasFollowing).toBe(false);
     });
   });
 
-  // ---------- GET /following ----------
-  describe("GET /api/follows/following", () => {
-    it("returns only my follows", async () => {
-      const me = await registerUser("investor");
-      const other = await registerUser("investor");
-      const biz1 = await registerUser("business");
-      const biz2 = await registerUser("business");
-
-      // me follows biz1
-      await request(app)
-        .post(`/api/follows/${biz1.user.id}`)
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(201);
-
-      // other follows biz2 (should not show up for me)
-      await request(app)
-        .post(`/api/follows/${biz2.user.id}`)
-        .set("Authorization", `Bearer ${other.token}`)
-        .expect(201);
+  describe("POST /api/follows/investor/:id", () => {
+    it("follows an investor", async () => {
+      const follower = await registerUser();
+      const investor = await createInvestor();
 
       const res = await request(app)
-        .get("/api/follows/following")
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(200);
-
-      expect(res.body.users.length).toBe(1);
-      expect(res.body.users[0].id).toBe(biz1.user.id);
-      expect(res.body.pagination.total).toBe(1);
-    });
-
-    it("includes role-specific profile data", async () => {
-      const me = await registerUser("investor");
-      const biz = await registerUser("business");
-
-      await request(app)
-        .post(`/api/follows/${biz.user.id}`)
-        .set("Authorization", `Bearer ${me.token}`)
+        .post(`/api/follows/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(201);
-
-      const res = await request(app)
-        .get("/api/follows/following")
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(200);
-
-      expect(res.body.users[0].profile.companyName).toBe("Acme");
+      expect(res.body.following).toBe(true);
     });
 
-    it("respects limit", async () => {
-      const me = await registerUser("investor");
-      for (let i = 0; i < 3; i++) {
-        const u = await registerUser("business");
-        await request(app)
-          .post(`/api/follows/${u.user.id}`)
-          .set("Authorization", `Bearer ${me.token}`)
-          .expect(201);
-      }
-
-      const res = await request(app)
-        .get("/api/follows/following?limit=2")
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(200);
-
-      expect(res.body.users.length).toBe(2);
-      expect(res.body.pagination.total).toBe(3);
-    });
-
-    it("rejects invalid limit (400)", async () => {
-      const me = await registerUser("investor");
+    it("400 for following yourself", async () => {
+      const investor = await createInvestor();
       await request(app)
-        .get("/api/follows/following?limit=500")
-        .set("Authorization", `Bearer ${me.token}`)
+        .post(`/api/follows/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${investor.token}`)
         .expect(400);
     });
 
-    it("returns empty when following nobody", async () => {
-      const me = await registerUser("investor");
+    it("400 when target has no investor profile", async () => {
+      const follower = await registerUser();
+      const regular = await registerUser();
+
+      await request(app)
+        .post(`/api/follows/investor/${regular.user.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
+        .expect(400);
+    });
+  });
+
+  describe("GET /api/follows/following", () => {
+    it("returns businesses and investors I follow", async () => {
+      const me = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+      const investor = await createInvestor();
+
+      await request(app)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${me.token}`)
+        .expect(201);
+      await request(app)
+        .post(`/api/follows/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${me.token}`)
+        .expect(201);
+
       const res = await request(app)
         .get("/api/follows/following")
         .set("Authorization", `Bearer ${me.token}`)
         .expect(200);
-      expect(res.body.users).toEqual([]);
+
+      expect(res.body.following.length).toBe(2);
+      const types = res.body.following.map((f) => f.type).sort();
+      expect(types).toEqual(["business", "investor"]);
+    });
+
+    it("empty when following nobody", async () => {
+      const me = await registerUser();
+      const res = await request(app)
+        .get("/api/follows/following")
+        .set("Authorization", `Bearer ${me.token}`)
+        .expect(200);
+      expect(res.body.following).toEqual([]);
     });
   });
 
-  // ---------- GET /followers ----------
-  describe("GET /api/follows/followers", () => {
-    it("returns only my followers", async () => {
-      const me = await registerUser("business");
-      const a = await registerUser("investor");
-      const b = await registerUser("investor");
+  describe("GET /api/follows/business/:id/followers", () => {
+    it("owner sees their business's followers", async () => {
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+      const f1 = await registerUser();
+      const f2 = await registerUser();
 
       await request(app)
-        .post(`/api/follows/${me.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${f1.token}`)
         .expect(201);
       await request(app)
-        .post(`/api/follows/${me.user.id}`)
-        .set("Authorization", `Bearer ${b.token}`)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${f2.token}`)
         .expect(201);
 
       const res = await request(app)
-        .get("/api/follows/followers")
-        .set("Authorization", `Bearer ${me.token}`)
+        .get(`/api/follows/business/${biz.id}/followers`)
+        .set("Authorization", `Bearer ${owner.token}`)
         .expect(200);
 
-      expect(res.body.users.length).toBe(2);
+      expect(res.body.followers.length).toBe(2);
     });
 
-    it("does not include users I follow but who don't follow back", async () => {
-      const me = await registerUser("business");
-      const other = await registerUser("investor");
+    it("403 for non-owner", async () => {
+      const owner = await registerUser();
+      const attacker = await registerUser();
+      const biz = await createBusiness(owner.token);
 
       await request(app)
-        .post(`/api/follows/${other.user.id}`)
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(201);
-
-      const res = await request(app)
-        .get("/api/follows/followers")
-        .set("Authorization", `Bearer ${me.token}`)
-        .expect(200);
-
-      expect(res.body.users.length).toBe(0);
+        .get(`/api/follows/business/${biz.id}/followers`)
+        .set("Authorization", `Bearer ${attacker.token}`)
+        .expect(403);
     });
   });
 
-  // ---------- GET /status/:userId ----------
-  describe("GET /api/follows/status/:userId", () => {
-    it("returns following=true when following", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+  describe("GET /api/follows/investor/followers", () => {
+    it("returns my followers as an investor", async () => {
+      const investor = await createInvestor();
+      const f1 = await registerUser();
+
       await request(app)
-        .post(`/api/follows/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .post(`/api/follows/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${f1.token}`)
         .expect(201);
 
       const res = await request(app)
-        .get(`/api/follows/status/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .get("/api/follows/investor/followers")
+        .set("Authorization", `Bearer ${investor.token}`)
+        .expect(200);
+
+      expect(res.body.followers.length).toBe(1);
+    });
+  });
+
+  describe("GET /api/follows/status/business/:id", () => {
+    it("true when following", async () => {
+      const follower = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+
+      await request(app)
+        .post(`/api/follows/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
+        .expect(201);
+
+      const res = await request(app)
+        .get(`/api/follows/status/business/${biz.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
         .expect(200);
       expect(res.body.following).toBe(true);
     });
 
-    it("returns following=false when not following", async () => {
-      const a = await registerUser("investor");
-      const b = await registerUser("business");
+    it("false when not following", async () => {
+      const me = await registerUser();
+      const owner = await registerUser();
+      const biz = await createBusiness(owner.token);
+
       const res = await request(app)
-        .get(`/api/follows/status/${b.user.id}`)
-        .set("Authorization", `Bearer ${a.token}`)
+        .get(`/api/follows/status/business/${biz.id}`)
+        .set("Authorization", `Bearer ${me.token}`)
         .expect(200);
       expect(res.body.following).toBe(false);
+    });
+  });
+
+  describe("GET /api/follows/status/investor/:id", () => {
+    it("true when following an investor", async () => {
+      const follower = await registerUser();
+      const investor = await createInvestor();
+
+      await request(app)
+        .post(`/api/follows/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
+        .expect(201);
+
+      const res = await request(app)
+        .get(`/api/follows/status/investor/${investor.user.id}`)
+        .set("Authorization", `Bearer ${follower.token}`)
+        .expect(200);
+      expect(res.body.following).toBe(true);
     });
   });
 });

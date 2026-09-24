@@ -8,15 +8,16 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { users } from "./user.model.js";
+import { businesses } from "./businessProfile.model.js";
 
 export const profileEditHistory = pgTable(
   "profile_edit_history",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
-    businessId: uuid("business_id")
+        businessId: uuid("business_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => businesses.id, { onDelete: "cascade" }),
 
     editedById: uuid("edited_by_id").references(() => users.id, {
       onDelete: "set null",

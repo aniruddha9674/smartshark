@@ -1,30 +1,46 @@
-import * as businessProfileService from "../services/businessProfile.service.js";
+import * as businessService from "../services/businessProfile.service.js";
 
-// GET /api/business/me
-export const getMe = async (req, res) => {
-  const profile = await businessProfileService.getBusinessProfile(req.user.id);
-  res.json({ profile });
+// GET /api/businesses — list all businesses I own
+export const listMine = async (req, res) => {
+  const businesses = await businessService.listMyBusinesses(req.user.id);
+  res.json({ businesses });
 };
 
-// PATCH /api/business/me
-export const updateMe = async (req, res) => {
-  const profile = await businessProfileService.updateBusinessProfile(
-    req.user.id,   // whose profile
-    req.user.id,   // who is editing (always self for now)
-    req.body       // already validated + stripped by middleware
+// POST /api/businesses — create a new business
+export const create = async (req, res) => {
+  const business = await businessService.createBusiness(req.user.id, req.body);
+  res.status(201).json({ business });
+};
+
+// GET /api/businesses/:id
+export const getOne = async (req, res) => {
+  const business = await businessService.getBusiness(req.params.id, req.user.id);
+  res.json({ business });
+};
+
+// PATCH /api/businesses/:id
+export const update = async (req, res) => {
+  const business = await businessService.updateBusiness(
+    req.params.id,
+    req.user.id,
+    req.body
   );
-  res.json({ profile });
+  res.json({ business });
 };
 
-// POST /api/business/complete
+// POST /api/businesses/:id/complete
 export const complete = async (req, res) => {
-  const result = await businessProfileService.completeBusinessProfile(req.user.id);
+  const result = await businessService.completeBusiness(
+    req.params.id,
+    req.user.id
+  );
   res.json(result);
 };
 
-// GET /api/business/history
+// GET /api/businesses/:id/history
 export const getHistory = async (req, res) => {
-  const history = await businessProfileService.getBusinessProfileHistory(
+  const history = await businessService.getBusinessHistory(
+    req.params.id,
     req.user.id
   );
   res.json({ history });

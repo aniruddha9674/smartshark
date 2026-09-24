@@ -1,6 +1,11 @@
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
-import { users, refreshTokens } from "../models/postgres/index.js";
+import {
+  users,
+  refreshTokens,
+  businesses,
+  investorProfiles,
+} from "../models/postgres/index.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import {
   signAccessToken,
@@ -13,7 +18,9 @@ import { env } from "../config/env.js";
 const REFRESH_TTL_MS = env.refreshTokenTtlDays * 24 * 60 * 60 * 1000;
 
 // ---------- Register ----------
-export const registerUser = async ({ name, email, password, role }) => {
+// No `role` param. Users register with just identity.
+// They add a business or become an investor afterwards.
+export const registerUser = async ({ name, email, password }) => {
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email),
   });
@@ -23,11 +30,12 @@ export const registerUser = async ({ name, email, password, role }) => {
 
   const [user] = await db
     .insert(users)
-    .values({ name, email, passwordHash, role })
+    .values({ name, email, passwordHash })
     .returning();
 
   const tokens = await issueTokens(user, null);
-  return { user: sanitize(user), ...tokens };
+  const enriched = await enrichWithCapabilities(user);
+  return { user: enriched, ...tokens };
 };
 
 // ---------- Login ----------
@@ -43,7 +51,8 @@ export const loginUser = async ({ email, password }, userAgent) => {
   if (!ok) throw ApiError.unauthorized("Invalid credentials");
 
   const tokens = await issueTokens(user, userAgent);
-  return { user: sanitize(user), ...tokens };
+  const enriched = await enrichWithCapabilities(user);
+  return { user: enriched, ...tokens };
 };
 
 // ---------- Refresh ----------
@@ -74,7 +83,8 @@ export const refreshSession = async (rawRefreshToken, userAgent) => {
     .where(eq(refreshTokens.id, stored.id));
 
   const tokens = await issueTokens(user, userAgent);
-  return { user: sanitize(user), ...tokens };
+  const enriched = await enrichWithCapabilities(user);
+  return { user: enriched, ...tokens };
 };
 
 // ---------- Logout ----------
@@ -87,9 +97,23 @@ export const logoutUser = async (rawRefreshToken) => {
     .where(eq(refreshTokens.tokenHash, tokenHash));
 };
 
+// ---------- Get current user (for /me) ----------
+export const getCurrentUser = async (userId) => {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+  if (!user) throw ApiError.notFound("User not found");
+  return await enrichWithCapabilities(user);
+};
+
 // ---------- Helpers ----------
+
 const issueTokens = async (user, userAgent) => {
-  const accessToken = signAccessToken({ id: user.id, role: user.role });
+  // JWT now carries id + isAdmin. Capabilities are checked per-request.
+  const accessToken = signAccessToken({
+    id: user.id,
+    isAdmin: user.isAdmin,
+  });
 
   const { raw, hash } = generateRefreshToken();
   await db.insert(refreshTokens).values({
@@ -102,7 +126,38 @@ const issueTokens = async (user, userAgent) => {
   return { accessToken, refreshToken: raw };
 };
 
+// Strip sensitive fields
 const sanitize = (user) => {
   const { passwordHash, ...rest } = user;
   return rest;
+};
+
+// Attach capabilities derived from data — no more role column.
+// One query for business count, one for investor profile row.
+const enrichWithCapabilities = async (user) => {
+  const sanitized = sanitize(user);
+
+  const [businessCountRow, investorRow] = await Promise.all([
+    db
+      .select({ count: sql`count(*)`.mapWith(Number) })
+      .from(businesses)
+      .where(eq(businesses.ownerId, user.id)),
+    db.query.investorProfiles.findFirst({
+      where: eq(investorProfiles.userId, user.id),
+      columns: { id: true, isComplete: true },
+    }),
+  ]);
+
+  const businessCount = businessCountRow[0]?.count ?? 0;
+
+  return {
+    ...sanitized,
+    capabilities: {
+      isAdmin: user.isAdmin,
+      hasBusiness: businessCount > 0,
+      businessCount,
+      isInvestor: !!investorRow,
+      isInvestorProfileComplete: investorRow?.isComplete ?? false,
+    },
+  };
 };

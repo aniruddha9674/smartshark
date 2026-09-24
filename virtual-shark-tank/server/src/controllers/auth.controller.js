@@ -1,7 +1,3 @@
-import { eq } from "drizzle-orm";
-import { db } from "../config/db.postgres.js";
-import { users } from "../models/postgres/index.js";
-import { ApiError } from "../utils/apiError.js";
 import * as authService from "../services/auth.service.js";
 import { env } from "../config/env.js";
 
@@ -55,13 +51,6 @@ export const logout = async (req, res) => {
 };
 
 export const me = async (req, res) => {
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, req.user.id),
-  });
-
-  if (!user) throw ApiError.unauthorized("User not found");
-  if (!user.isActive) throw ApiError.forbidden("Account is disabled");
-
-  const { passwordHash, ...sanitized } = user;
-  res.json({ user: sanitized });
+  const user = await authService.getCurrentUser(req.user.id);
+  res.json({ user });
 };

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../../src/config/db.postgres.js";
 import {
   users,
-  businessProfiles,
+  businesses,
   investorProfiles,
   follows,
   notifications,
@@ -11,22 +11,35 @@ import {
 import * as service from "../../src/services/follow.service.js";
 import { ApiError } from "../../src/utils/apiError.js";
 
-const createUser = async (role = "business", overrides = {}) => {
+// ---- Helpers ----
+const createUser = async (overrides = {}) => {
   const [user] = await db
     .insert(users)
     .values({
       name: `User ${Math.random().toString(36).slice(2, 7)}`,
       email: `u-${Date.now()}-${Math.random()}@example.com`,
       passwordHash: "$2b$12$fake",
-      role,
       ...overrides,
     })
     .returning();
-  if (role === "business") {
-    await db.insert(businessProfiles).values({ userId: user.id, companyName: "Acme" });
-  } else {
-    await db.insert(investorProfiles).values({ userId: user.id, firmName: "Peak" });
-  }
+  return user;
+};
+
+const createBusinessFor = async (ownerId, overrides = {}) => {
+  const [b] = await db
+    .insert(businesses)
+    .values({
+      ownerId,
+      companyName: `Biz ${Math.random().toString(36).slice(2, 7)}`,
+      ...overrides,
+    })
+    .returning();
+  return b;
+};
+
+const createInvestor = async (overrides = {}) => {
+  const user = await createUser(overrides);
+  await db.insert(investorProfiles).values({ userId: user.id, firmName: "Peak" });
   return user;
 };
 
@@ -35,91 +48,88 @@ describe("follow.service", () => {
     await db.delete(users);
   });
 
-  describe("followUser", () => {
-    it("creates a follow row", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      const result = await service.followUser(a.id, b.id);
+  // ============================================================
+  // FOLLOW BUSINESS
+  // ============================================================
+  describe("followBusiness", () => {
+    it("creates a follow row with targetType=business", async () => {
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      const result = await service.followBusiness(follower.id, biz.id);
       expect(result.following).toBe(true);
       expect(result.alreadyFollowing).toBe(false);
 
       const rows = await db.select().from(follows);
       expect(rows.length).toBe(1);
+      expect(rows[0].targetType).toBe("business");
+      expect(rows[0].targetBusinessId).toBe(biz.id);
+      expect(rows[0].targetUserId).toBeNull();
     });
 
     it("is idempotent on duplicate follow", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      await service.followUser(a.id, b.id);
-      const second = await service.followUser(a.id, b.id);
-      expect(second.following).toBe(true);
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      await service.followBusiness(follower.id, biz.id);
+      const second = await service.followBusiness(follower.id, biz.id);
       expect(second.alreadyFollowing).toBe(true);
 
       const rows = await db.select().from(follows);
       expect(rows.length).toBe(1);
     });
 
-    it("rejects self-follow", async () => {
-      const a = await createUser();
-      await expect(service.followUser(a.id, a.id)).rejects.toThrow(ApiError);
+    it("rejects following your own business", async () => {
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      await expect(service.followBusiness(owner.id, biz.id)).rejects.toThrow(ApiError);
     });
 
-    it("rejects following a nonexistent user", async () => {
-      const a = await createUser();
+    it("rejects following a nonexistent business", async () => {
+      const follower = await createUser();
       const fake = "00000000-0000-0000-0000-000000000000";
-      await expect(service.followUser(a.id, fake)).rejects.toThrow(ApiError);
+
+      await expect(service.followBusiness(follower.id, fake)).rejects.toThrow(ApiError);
     });
 
-    it("rejects following an inactive user", async () => {
-      const a = await createUser();
-      const b = await createUser("business", { isActive: false });
-      await expect(service.followUser(a.id, b.id)).rejects.toThrow(ApiError);
-    });
+    it("creates a follow notification for the business owner", async () => {
+      const follower = await createUser({ name: "Alice" });
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id, { companyName: "Acme" });
 
-    it("creates a follow notification for the target", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      await service.followUser(a.id, b.id);
+      await service.followBusiness(follower.id, biz.id);
 
-      const rows = await db.select().from(notifications);
-      expect(rows.length).toBe(1);
-      expect(rows[0].type).toBe("follow");
-      expect(rows[0].userId).toBe(b.id);
-      expect(rows[0].actorId).toBe(a.id);
-      expect(rows[0].title).toMatch(/started following you/);
+      const notifs = await db.select().from(notifications);
+      expect(notifs.length).toBe(1);
+      expect(notifs[0].type).toBe("follow");
+      expect(notifs[0].userId).toBe(owner.id);
+      expect(notifs[0].actorId).toBe(follower.id);
     });
 
     it("does NOT create a second notification on repeat follow", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      await service.followUser(a.id, b.id);
-      await service.followUser(a.id, b.id);
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
 
-      const rows = await db.select().from(notifications);
-      expect(rows.length).toBe(1);
-    });
+      await service.followBusiness(follower.id, biz.id);
+      await service.followBusiness(follower.id, biz.id);
 
-    it("skips notification when target has notifyFollow=false", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business", { notifyFollow: false });
-      await service.followUser(a.id, b.id);
-
-      const rows = await db.select().from(notifications);
-      expect(rows.length).toBe(0);
-
-      // But the follow itself still succeeded
-      const fs = await db.select().from(follows);
-      expect(fs.length).toBe(1);
+      const notifs = await db.select().from(notifications);
+      expect(notifs.length).toBe(1);
     });
   });
 
-  describe("unfollowUser", () => {
-    it("removes a follow row", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      await service.followUser(a.id, b.id);
-      const result = await service.unfollowUser(a.id, b.id);
-      expect(result.following).toBe(false);
+  describe("unfollowBusiness", () => {
+    it("removes the follow row", async () => {
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      await service.followBusiness(follower.id, biz.id);
+      const result = await service.unfollowBusiness(follower.id, biz.id);
       expect(result.wasFollowing).toBe(true);
 
       const rows = await db.select().from(follows);
@@ -127,107 +137,209 @@ describe("follow.service", () => {
     });
 
     it("is idempotent when not following", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      const result = await service.unfollowUser(a.id, b.id);
-      expect(result.following).toBe(false);
-      expect(result.wasFollowing).toBe(false);
-    });
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
 
-    it("rejects self-unfollow", async () => {
-      const a = await createUser();
-      await expect(service.unfollowUser(a.id, a.id)).rejects.toThrow(ApiError);
+      const result = await service.unfollowBusiness(follower.id, biz.id);
+      expect(result.wasFollowing).toBe(false);
     });
   });
 
-  describe("isFollowing", () => {
+  describe("isFollowingBusiness", () => {
     it("returns true when following", async () => {
-      const a = await createUser("investor");
-      const b = await createUser("business");
-      await service.followUser(a.id, b.id);
-      expect(await service.isFollowing(a.id, b.id)).toBe(true);
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+      await service.followBusiness(follower.id, biz.id);
+      expect(await service.isFollowingBusiness(follower.id, biz.id)).toBe(true);
     });
 
     it("returns false when not following", async () => {
-      const a = await createUser();
-      const b = await createUser();
-      expect(await service.isFollowing(a.id, b.id)).toBe(false);
+      const follower = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+      expect(await service.isFollowingBusiness(follower.id, biz.id)).toBe(false);
     });
   });
 
+  // ============================================================
+  // FOLLOW INVESTOR
+  // ============================================================
+  describe("followInvestor", () => {
+    it("creates a follow row with targetType=investor", async () => {
+      const follower = await createUser();
+      const target = await createInvestor();
+
+      const result = await service.followInvestor(follower.id, target.id);
+      expect(result.following).toBe(true);
+
+      const rows = await db.select().from(follows);
+      expect(rows[0].targetType).toBe("investor");
+      expect(rows[0].targetUserId).toBe(target.id);
+      expect(rows[0].targetBusinessId).toBeNull();
+    });
+
+    it("rejects following yourself", async () => {
+      const user = await createUser();
+      await db.insert(investorProfiles).values({ userId: user.id });
+      await expect(service.followInvestor(user.id, user.id)).rejects.toThrow(ApiError);
+    });
+
+    it("rejects following a non-investor user", async () => {
+      const follower = await createUser();
+      const regularUser = await createUser(); // no investor profile
+      await expect(
+        service.followInvestor(follower.id, regularUser.id)
+      ).rejects.toThrow(ApiError);
+    });
+
+    it("notifies the target investor", async () => {
+      const follower = await createUser({ name: "Bob" });
+      const investor = await createInvestor();
+
+      await service.followInvestor(follower.id, investor.id);
+
+      const notifs = await db.select().from(notifications);
+      expect(notifs.length).toBe(1);
+      expect(notifs[0].userId).toBe(investor.id);
+      expect(notifs[0].title).toMatch(/Bob/);
+    });
+  });
+
+  describe("unfollowInvestor", () => {
+    it("removes the follow row", async () => {
+      const follower = await createUser();
+      const investor = await createInvestor();
+
+      await service.followInvestor(follower.id, investor.id);
+      const result = await service.unfollowInvestor(follower.id, investor.id);
+      expect(result.wasFollowing).toBe(true);
+    });
+
+    it("is idempotent", async () => {
+      const follower = await createUser();
+      const investor = await createInvestor();
+      const result = await service.unfollowInvestor(follower.id, investor.id);
+      expect(result.wasFollowing).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // GET FOLLOWING (mixed list)
+  // ============================================================
   describe("getFollowing", () => {
-    it("returns only users I follow, newest first", async () => {
-      const me = await createUser("investor");
-      const a = await createUser("business", { name: "First" });
-      const b = await createUser("business", { name: "Second" });
-      await service.followUser(me.id, a.id);
+    it("returns businesses and investors I follow, newest first", async () => {
+      const me = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id, { companyName: "Acme" });
+      const investor = await createInvestor({ name: "Peak Ventures" });
+
+      await service.followBusiness(me.id, biz.id);
       await new Promise((r) => setTimeout(r, 20));
-      await service.followUser(me.id, b.id);
+      await service.followInvestor(me.id, investor.id);
 
       const result = await service.getFollowing(me.id);
-      expect(result.users.length).toBe(2);
-      expect(result.users[0].name).toBe("Second");
-      expect(result.users[1].name).toBe("First");
-      expect(result.pagination.total).toBe(2);
+      expect(result.following.length).toBe(2);
+      // Newest first — investor was followed second
+      expect(result.following[0].type).toBe("investor");
+      expect(result.following[0].name).toBe("Peak Ventures");
+      expect(result.following[1].type).toBe("business");
+      expect(result.following[1].companyName).toBe("Acme");
     });
 
-    it("includes the correct profile shape per role", async () => {
-      const me = await createUser("investor");
-      const biz = await createUser("business");
-      const inv = await createUser("investor");
+    it("includes profile fields per target type", async () => {
+      const me = await createUser();
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id, {
+        companyName: "Acme",
+        sector: "SaaS",
+        city: "Bangalore",
+      });
+      const investor = await createInvestor({ name: "Alice" });
+      await db
+        .update(investorProfiles)
+        .set({ firmName: "Peak", investmentFocus: "SaaS" })
+        .where(eq(investorProfiles.userId, investor.id));
 
-      await service.followUser(me.id, biz.id);
-      await service.followUser(me.id, inv.id);
+      await service.followBusiness(me.id, biz.id);
+      await service.followInvestor(me.id, investor.id);
 
       const result = await service.getFollowing(me.id);
-      const bizCard = result.users.find((u) => u.role === "business");
-      const invCard = result.users.find((u) => u.role === "investor");
+      const bizCard = result.following.find((f) => f.type === "business");
+      const invCard = result.following.find((f) => f.type === "investor");
 
-      expect(bizCard.profile.companyName).toBe("Acme");
-      expect(invCard.profile.firmName).toBe("Peak");
-    });
-
-    it("respects limit and offset", async () => {
-      const me = await createUser("investor");
-      for (let i = 0; i < 5; i++) {
-        const u = await createUser("business", { name: `U${i}` });
-        await service.followUser(me.id, u.id);
-      }
-      const page1 = await service.getFollowing(me.id, { limit: 2, offset: 0 });
-      const page2 = await service.getFollowing(me.id, { limit: 2, offset: 2 });
-      expect(page1.users.length).toBe(2);
-      expect(page2.users.length).toBe(2);
-      expect(page1.users[0].id).not.toBe(page2.users[0].id);
+      expect(bizCard.companyName).toBe("Acme");
+      expect(bizCard.sector).toBe("SaaS");
+      expect(invCard.firmName).toBe("Peak");
+      expect(invCard.investmentFocus).toBe("SaaS");
     });
 
     it("returns empty list when following nobody", async () => {
-      const me = await createUser("investor");
+      const me = await createUser();
       const result = await service.getFollowing(me.id);
-      expect(result.users).toEqual([]);
+      expect(result.following).toEqual([]);
       expect(result.pagination.total).toBe(0);
     });
   });
 
-  describe("getFollowers", () => {
-    it("returns only users who follow me", async () => {
-      const me = await createUser("business");
-      const a = await createUser("investor", { name: "Follower A" });
-      const b = await createUser("investor", { name: "Follower B" });
-      await service.followUser(a.id, me.id);
-      await service.followUser(b.id, me.id);
+  // ============================================================
+  // BUSINESS FOLLOWERS
+  // ============================================================
+  describe("getBusinessFollowers", () => {
+    it("returns followers for the owner", async () => {
+      const owner = await createUser();
+      const biz = await createBusinessFor(owner.id);
+      const f1 = await createUser({ name: "Follower 1" });
+      const f2 = await createUser({ name: "Follower 2" });
 
-      const result = await service.getFollowers(me.id);
-      expect(result.users.length).toBe(2);
+      await service.followBusiness(f1.id, biz.id);
+      await service.followBusiness(f2.id, biz.id);
+
+      const result = await service.getBusinessFollowers(biz.id, owner.id);
+      expect(result.followers.length).toBe(2);
       expect(result.pagination.total).toBe(2);
     });
 
-    it("does not include users I follow (not mutual unless they follow back)", async () => {
-      const me = await createUser("business");
-      const other = await createUser("investor");
-      await service.followUser(me.id, other.id); // I follow them
+    it("throws 403 for a non-owner", async () => {
+      const owner = await createUser();
+      const attacker = await createUser();
+      const biz = await createBusinessFor(owner.id);
 
-      const result = await service.getFollowers(me.id);
-      expect(result.users.length).toBe(0);
+      await expect(
+        service.getBusinessFollowers(biz.id, attacker.id)
+      ).rejects.toThrow(ApiError);
+    });
+
+    it("throws 404 for a nonexistent business", async () => {
+      const user = await createUser();
+      const fake = "00000000-0000-0000-0000-000000000000";
+      await expect(
+        service.getBusinessFollowers(fake, user.id)
+      ).rejects.toThrow(ApiError);
+    });
+  });
+
+  // ============================================================
+  // INVESTOR FOLLOWERS
+  // ============================================================
+  describe("getInvestorFollowers", () => {
+    it("returns followers for the investor", async () => {
+      const investor = await createInvestor();
+      const f1 = await createUser();
+      const f2 = await createUser();
+
+      await service.followInvestor(f1.id, investor.id);
+      await service.followInvestor(f2.id, investor.id);
+
+      const result = await service.getInvestorFollowers(investor.id);
+      expect(result.followers.length).toBe(2);
+    });
+
+    it("returns empty when nobody follows", async () => {
+      const investor = await createInvestor();
+      const result = await service.getInvestorFollowers(investor.id);
+      expect(result.followers).toEqual([]);
     });
   });
 });

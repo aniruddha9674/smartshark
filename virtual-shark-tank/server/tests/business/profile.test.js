@@ -2,209 +2,216 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../../src/app.js";
 import { db } from "../../src/config/db.postgres.js";
-import { users, businessProfiles } from "../../src/models/postgres/index.js";
+import { users } from "../../src/models/postgres/index.js";
 
-// ---- Helpers ----
-const registerAndLogin = async (role = "business", emailSuffix = "") => {
-  const email = `test-${role}-${Date.now()}-${Math.random()}${emailSuffix}@example.com`;
+const registerUser = async () => {
+  const email = `t-${Date.now()}-${Math.random()}@example.com`;
   const res = await request(app)
     .post("/api/auth/register")
-    .send({
-      name: "Test User",
-      email,
-      password: "Password123",
-      role,
-    })
+    .send({ name: "Test User", email, password: "Password123" })
     .expect(201);
-
-  return {
-    user: res.body.user,
-    token: res.body.accessToken,
-    cookie: res.headers["set-cookie"].find((c) => c.startsWith("refreshToken=")),
-  };
+  return { user: res.body.user, token: res.body.accessToken };
 };
 
-// Create a business user + a corresponding business_profiles row
-const createBusinessUser = async () => {
-  const { user, token } = await registerAndLogin("business");
-  await db.insert(businessProfiles).values({ userId: user.id });
-  return { user, token };
+const createBusiness = async (token, data = {}) => {
+  const res = await request(app)
+    .post("/api/businesses")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ companyName: "Acme Pvt Ltd", ...data })
+    .expect(201);
+  return res.body.business;
 };
 
-describe("Business profile endpoints", () => {
+describe("Business endpoints", () => {
   beforeEach(async () => {
     await db.delete(users);
   });
 
   // ---------- Auth gate ----------
-  describe("Auth / role gate", () => {
-    it("rejects GET /api/business/me without a token", async () => {
-      const res = await request(app).get("/api/business/me").expect(401);
-      expect(res.body.error).toBe("No token provided");
-    });
-
-    it("rejects GET /api/business/me for an investor", async () => {
-      const { token } = await registerAndLogin("investor");
-      const res = await request(app)
-        .get("/api/business/me")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(403);
-      expect(res.body.error).toBe("Insufficient permissions");
+  describe("Auth", () => {
+    it("401 without a token", async () => {
+      await request(app).get("/api/businesses").expect(401);
     });
   });
 
-  // ---------- GET /me ----------
-  describe("GET /api/business/me", () => {
-    it("returns the profile of the logged-in business", async () => {
-      const { user, token } = await createBusinessUser();
+  // ---------- POST / ----------
+  describe("POST /api/businesses", () => {
+    it("creates a business", async () => {
+      const { token } = await registerUser();
       const res = await request(app)
-        .get("/api/business/me")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-
-      expect(res.body.profile).toBeDefined();
-      expect(res.body.profile.userId).toBe(user.id);
-      expect(res.body.profile.companyName).toBeNull();
-    });
-  });
-
-  // ---------- PATCH /me ----------
-  describe("PATCH /api/business/me", () => {
-    it("updates a single field", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .patch("/api/business/me")
+        .post("/api/businesses")
         .set("Authorization", `Bearer ${token}`)
         .send({ companyName: "Acme Pvt Ltd" })
-        .expect(200);
+        .expect(201);
 
-      expect(res.body.profile.companyName).toBe("Acme Pvt Ltd");
+      expect(res.body.business.companyName).toBe("Acme Pvt Ltd");
+      expect(res.body.business.isProfileComplete).toBe(false);
     });
 
-    it("updates multiple fields at once", async () => {
-      const { token } = await createBusinessUser();
+    it("allows a user to create multiple businesses", async () => {
+      const { token } = await registerUser();
+      await createBusiness(token, { companyName: "Acme" });
+      await createBusiness(token, { companyName: "Beta" });
+
       const res = await request(app)
-        .patch("/api/business/me")
+        .get("/api/businesses")
         .set("Authorization", `Bearer ${token}`)
-        .send({ companyName: "Acme", city: "Mumbai", fundingAsk: 5000000 })
         .expect(200);
 
-      expect(res.body.profile.companyName).toBe("Acme");
-      expect(res.body.profile.city).toBe("Mumbai");
+      expect(res.body.businesses.length).toBe(2);
     });
 
-    it("returns 400 for an empty body", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .patch("/api/business/me")
+    it("400 without companyName", async () => {
+      const { token } = await registerUser();
+      await request(app)
+        .post("/api/businesses")
         .set("Authorization", `Bearer ${token}`)
         .send({})
         .expect(400);
-
-      expect(res.body.error).toBe("Validation failed");
-    });
-
-    it("returns 400 for an invalid field value", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .patch("/api/business/me")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ fundingAsk: -100 })
-        .expect(400);
-
-      expect(res.body.error).toBe("Validation failed");
-    });
-
-    it("strips unknown fields from the payload (no privilege escalation)", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .patch("/api/business/me")
-        .set("Authorization", `Bearer ${token}`)
-        .send({
-          companyName: "Acme",
-          verificationTier: "verified",   // attacker attempt
-          userId: "some-other-id",         // attacker attempt
-        })
-        .expect(200);
-
-      expect(res.body.profile.verificationTier).toBe("unverified"); // default untouched
-      expect(res.body.profile.userId).not.toBe("some-other-id");
-    });
-
-    it("coerces string numbers to numeric fields", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .patch("/api/business/me")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ fundingAsk: "5000000" })
-        .expect(200);
-
-      expect(res.body.profile.fundingAsk).toBe("5000000");
-    });
-
-    it("only updates the logged-in user's profile (no cross-user writes)", async () => {
-      const a = await createBusinessUser();
-      const b = await createBusinessUser();
-
-      await request(app)
-        .patch("/api/business/me")
-        .set("Authorization", `Bearer ${a.token}`)
-        .send({ companyName: "A's Company" })
-        .expect(200);
-
-      // Fetch b's profile — must be untouched
-      const bRes = await request(app)
-        .get("/api/business/me")
-        .set("Authorization", `Bearer ${b.token}`)
-        .expect(200);
-
-      expect(bRes.body.profile.companyName).toBeNull();
     });
   });
 
-  // ---------- POST /complete ----------
-  describe("POST /api/business/complete", () => {
-    it("returns 400 with missing fields when profile is empty", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .post("/api/business/complete")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(400);
+  // ---------- GET / ----------
+  describe("GET /api/businesses", () => {
+    it("returns only my businesses", async () => {
+      const me = await registerUser();
+      const other = await registerUser();
 
-      expect(res.body.error).toBe("Profile incomplete");
-      expect(res.body.details.missingFields).toContain("companyName");
-      expect(res.body.details.missingFields.length).toBe(6);
+      await createBusiness(me.token, { companyName: "Mine" });
+      await createBusiness(other.token, { companyName: "Theirs" });
+
+      const res = await request(app)
+        .get("/api/businesses")
+        .set("Authorization", `Bearer ${me.token}`)
+        .expect(200);
+
+      expect(res.body.businesses.length).toBe(1);
+      expect(res.body.businesses[0].companyName).toBe("Mine");
     });
 
-    it("returns 400 when only some fields are filled", async () => {
-      const { token } = await createBusinessUser();
+    it("returns empty when I own nothing", async () => {
+      const { token } = await registerUser();
+      const res = await request(app)
+        .get("/api/businesses")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(res.body.businesses).toEqual([]);
+    });
+  });
+
+  // ---------- GET /:id ----------
+  describe("GET /api/businesses/:id", () => {
+    it("owner can fetch their business", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
+      const res = await request(app)
+        .get(`/api/businesses/${biz.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(res.body.business.id).toBe(biz.id);
+    });
+
+    it("non-owner gets 403", async () => {
+      const owner = await registerUser();
+      const attacker = await registerUser();
+      const biz = await createBusiness(owner.token);
+
       await request(app)
-        .patch("/api/business/me")
+        .get(`/api/businesses/${biz.id}`)
+        .set("Authorization", `Bearer ${attacker.token}`)
+        .expect(403);
+    });
+
+    it("404 for a nonexistent business", async () => {
+      const { token } = await registerUser();
+      const fake = "00000000-0000-0000-0000-000000000000";
+      await request(app)
+        .get(`/api/businesses/${fake}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(404);
+    });
+  });
+
+  // ---------- PATCH /:id ----------
+  describe("PATCH /api/businesses/:id", () => {
+    it("updates a business", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
+      const res = await request(app)
+        .patch(`/api/businesses/${biz.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ city: "Bangalore", fundingAsk: 5000000 })
+        .expect(200);
+
+      expect(res.body.business.city).toBe("Bangalore");
+    });
+
+    it("400 for empty body", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
+      await request(app)
+        .patch(`/api/businesses/${biz.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({})
+        .expect(400);
+    });
+
+    it("403 for non-owner", async () => {
+      const owner = await registerUser();
+      const attacker = await registerUser();
+      const biz = await createBusiness(owner.token);
+
+      await request(app)
+        .patch(`/api/businesses/${biz.id}`)
+        .set("Authorization", `Bearer ${attacker.token}`)
+        .send({ city: "Hijack" })
+        .expect(403);
+    });
+
+    it("strips unknown fields (no privilege escalation)", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
+      const res = await request(app)
+        .patch(`/api/businesses/${biz.id}`)
         .set("Authorization", `Bearer ${token}`)
         .send({
-          companyName: "Acme",
-          sector: "SaaS",
           city: "Bangalore",
-          description: "We do SaaS",
-          fundingAsk: 5000000,
+          ownerId: "attacker-id",
+          verificationTier: "verified",
         })
         .expect(200);
 
+      expect(res.body.business.verificationTier).toBe("unverified");
+      expect(res.body.business.ownerId).not.toBe("attacker-id");
+    });
+  });
+
+  // ---------- POST /:id/complete ----------
+  describe("POST /api/businesses/:id/complete", () => {
+    it("400 with missing fields when incomplete", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
       const res = await request(app)
-        .post("/api/business/complete")
+        .post(`/api/businesses/${biz.id}/complete`)
         .set("Authorization", `Bearer ${token}`)
         .expect(400);
 
-      expect(res.body.details.missingFields).toEqual(["yearsOperating"]);
+      expect(res.body.details.missingFields).toContain("sector");
     });
 
-    it("returns 200 and sets isProfileComplete when all required fields are present", async () => {
-      const { user, token } = await createBusinessUser();
+    it("200 and sets isProfileComplete when all fields present", async () => {
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
+
       await request(app)
-        .patch("/api/business/me")
+        .patch(`/api/businesses/${biz.id}`)
         .set("Authorization", `Bearer ${token}`)
         .send({
-          companyName: "Acme",
           sector: "SaaS",
           city: "Bangalore",
           description: "We do SaaS things",
@@ -214,59 +221,52 @@ describe("Business profile endpoints", () => {
         .expect(200);
 
       const res = await request(app)
-        .post("/api/business/complete")
+        .post(`/api/businesses/${biz.id}/complete`)
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
 
       expect(res.body.isProfileComplete).toBe(true);
-
-      // Verify on /me
-      const me = await request(app)
-        .get("/api/auth/me")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-
-      expect(me.body.user.isProfileComplete).toBe(true);
     });
   });
 
-  // ---------- GET /history ----------
-  describe("GET /api/business/history", () => {
-    it("returns empty array when no edits", async () => {
-      const { token } = await createBusinessUser();
-      const res = await request(app)
-        .get("/api/business/history")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-
-      expect(res.body.history).toEqual([]);
-    });
-
+  // ---------- GET /:id/history ----------
+  describe("GET /api/businesses/:id/history", () => {
     it("returns edit history newest first", async () => {
-      const { token } = await createBusinessUser();
+      const { token } = await registerUser();
+      const biz = await createBusiness(token);
 
       await request(app)
-        .patch("/api/business/me")
+        .patch(`/api/businesses/${biz.id}`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ companyName: "First Name" })
+        .send({ city: "First" })
         .expect(200);
 
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 20));
 
       await request(app)
-        .patch("/api/business/me")
+        .patch(`/api/businesses/${biz.id}`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ companyName: "Second Name" })
+        .send({ city: "Second" })
         .expect(200);
 
       const res = await request(app)
-        .get("/api/business/history")
+        .get(`/api/businesses/${biz.id}/history`)
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
 
       expect(res.body.history.length).toBe(2);
-      expect(res.body.history[0].newValue).toBe("Second Name");
-      expect(res.body.history[0].fieldName).toBe("companyName");
+      expect(res.body.history[0].newValue).toBe("Second");
+    });
+
+    it("403 for non-owner", async () => {
+      const owner = await registerUser();
+      const attacker = await registerUser();
+      const biz = await createBusiness(owner.token);
+
+      await request(app)
+        .get(`/api/businesses/${biz.id}/history`)
+        .set("Authorization", `Bearer ${attacker.token}`)
+        .expect(403);
     });
   });
 });

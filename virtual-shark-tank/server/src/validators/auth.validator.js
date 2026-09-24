@@ -10,7 +10,7 @@ export const registerSchema = z.object({
     .regex(/[A-Z]/, "Must contain uppercase")
     .regex(/[a-z]/, "Must contain lowercase")
     .regex(/[0-9]/, "Must contain number"),
-  role: z.enum(["business", "investor"]),
+  // role: REMOVED — no more role at registration
 });
 
 export const loginSchema = z.object({

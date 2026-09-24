@@ -1,10 +1,24 @@
 import { eq } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
-import { users, investorProfiles } from "../models/postgres/index.js";
+import {  investorProfiles } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
 import { REQUIRED_INVESTOR_FIELDS } from "../validators/investorProfile.validator.js";
 
 // ---------- Read ----------
+export const createInvestorProfile = async (userId) => {
+  // Idempotent — return existing if already exists
+  const existing = await db.query.investorProfiles.findFirst({
+    where: eq(investorProfiles.userId, userId),
+  });
+  if (existing) return { profile: existing, created: false };
+
+  const [profile] = await db
+    .insert(investorProfiles)
+    .values({ userId })
+    .returning();
+
+  return { profile, created: true };
+};
 export const getInvestorProfile = async (userId) => {
   const profile = await db.query.investorProfiles.findFirst({
     where: eq(investorProfiles.userId, userId),
@@ -66,9 +80,9 @@ export const completeInvestorProfile = async (userId) => {
   }
 
   await db
-    .update(users)
-    .set({ isProfileComplete: true, updatedAt: new Date() })
-    .where(eq(users.id, userId));
+    .update(investorProfiles)
+    .set({ isComplete: true, updatedAt: new Date() })
+    .where(eq(investorProfiles.userId, userId));
 
-  return { isProfileComplete: true };
+  return { isComplete: true };
 };

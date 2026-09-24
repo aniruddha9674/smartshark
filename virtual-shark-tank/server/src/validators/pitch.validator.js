@@ -29,6 +29,7 @@ const contentSchema = z
 // Required to create: title, askAmount, equityOffered
 // Everything else is optional and can be filled before publish
 export const createPitchSchema = z.object({
+   businessId: z.string().uuid(),
   title: z.string().min(2).max(255),
   tagline: z.string().max(300).optional(),
   shortPitch: z.string().max(500).optional(),

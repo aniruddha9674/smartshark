@@ -92,4 +92,4 @@ POST {{baseUrl}}/api/auth/logout
 ### ─────────────────────────────────────────
 ### 11. Refresh after logout → should 401
 ### ─────────────────────────────────────────
-POST {{baseUrl}}/api/auth/refreshs
+POST {{baseUrl}}/api/auth/refresh

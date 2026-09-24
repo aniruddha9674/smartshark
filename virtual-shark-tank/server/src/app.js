@@ -23,7 +23,7 @@ app.use(cookieParser());
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);
-app.use("/api/business", businessRoutes); 
+app.use("/api/businesses", businessRoutes); 
 app.use("/api/investor", investorRoutes);
 app.use("/api/pitches", pitchRoutes);
 app.use("/api/follows", followRoutes);

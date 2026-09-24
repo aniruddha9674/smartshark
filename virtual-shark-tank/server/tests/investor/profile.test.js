@@ -135,13 +135,12 @@ describe("Investor profile endpoints", () => {
         .post("/api/investor/complete")
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
-      expect(res.body.isProfileComplete).toBe(true);
-
-      const me = await request(app)
-        .get("/api/auth/me")
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-      expect(me.body.user.isProfileComplete).toBe(true);
+      expect(res.body.isComplete).toBe(true);
+const me = await request(app)
+  .get("/api/auth/me")
+  .set("Authorization", `Bearer ${token}`)
+  .expect(200);
+expect(me.body.user.capabilities.isInvestorProfileComplete).toBe(true);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
-import { pitches, users } from "../models/postgres/index.js";
+import { pitches, businesses } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
 import { REQUIRED_TO_PUBLISH } from "../validators/pitch.validator.js";
 
@@ -8,11 +8,32 @@ import { REQUIRED_TO_PUBLISH } from "../validators/pitch.validator.js";
 const computeValuation = (askAmount, equityOffered) => {
   const ask = Number(askAmount);
   const equity = Number(equityOffered);
-  return (ask / (equity / 100)).toFixed(2); // numeric → string
+  return (ask / (equity / 100)).toFixed(2);
+};
+
+// Verify the user owns the business that owns this pitch
+const assertPitchOwnership = async (pitch, userId) => {
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, pitch.businessId),
+    columns: { id: true, ownerId: true, isProfileComplete: true },
+  });
+  if (!business || business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this pitch");
+  }
+  return business;
 };
 
 // ---------- Create draft ----------
-export const createPitch = async (businessId, data) => {
+export const createPitch = async (businessId, userId, data) => {
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
+    columns: { id: true, ownerId: true },
+  });
+  if (!business) throw ApiError.notFound("Business not found");
+  if (business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this business");
+  }
+
   const { askAmount, equityOffered, ...rest } = data;
 
   const [pitch] = await db
@@ -30,8 +51,17 @@ export const createPitch = async (businessId, data) => {
   return pitch;
 };
 
-// ---------- List my pitches ----------
-export const getMyPitches = async (businessId) => {
+// ---------- List my pitches for a business ----------
+export const getMyPitches = async (businessId, userId) => {
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, businessId),
+    columns: { ownerId: true },
+  });
+  if (!business) throw ApiError.notFound("Business not found");
+  if (business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this business");
+  }
+
   return await db.query.pitches.findMany({
     where: eq(pitches.businessId, businessId),
     orderBy: [desc(pitches.createdAt)],
@@ -43,11 +73,15 @@ export const getPitch = async (pitchId, requestingUserId) => {
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
-
   if (!pitch) throw ApiError.notFound("Pitch not found");
 
+  const business = await db.query.businesses.findFirst({
+    where: eq(businesses.id, pitch.businessId),
+    columns: { ownerId: true },
+  });
+  const isOwner = business?.ownerId === requestingUserId;
+
   // Owner sees any status. Everyone else only sees live pitches.
-  const isOwner = pitch.businessId === requestingUserId;
   if (!isOwner && pitch.status !== "live") {
     throw ApiError.notFound("Pitch not found");
   }
@@ -60,11 +94,10 @@ export const updatePitch = async (pitchId, userId, changes) => {
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
-
   if (!pitch) throw ApiError.notFound("Pitch not found");
-  if (pitch.businessId !== userId) {
-    throw ApiError.forbidden("You do not own this pitch");
-  }
+
+  await assertPitchOwnership(pitch, userId);
+
   if (pitch.status !== "draft") {
     throw ApiError.badRequest(`Cannot edit a ${pitch.status} pitch`);
   }
@@ -77,12 +110,8 @@ export const updatePitch = async (pitchId, userId, changes) => {
     valuation = computeValuation(nextAsk, nextEquity);
   }
 
-  const updates = {
-    ...changes,
-    valuation,
-  };
+  const updates = { ...changes, valuation };
 
-  // Coerce numeric fields to strings (Drizzle numeric expects strings)
   if (updates.askAmount != null) updates.askAmount = String(updates.askAmount);
   if (updates.equityOffered != null) updates.equityOffered = String(updates.equityOffered);
   if (updates.monthlyGrowthPct != null) updates.monthlyGrowthPct = String(updates.monthlyGrowthPct);
@@ -101,21 +130,19 @@ export const publishPitch = async (pitchId, userId) => {
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
-
   if (!pitch) throw ApiError.notFound("Pitch not found");
-  if (pitch.businessId !== userId) {
-    throw ApiError.forbidden("You do not own this pitch");
-  }
+
+  const business = await assertPitchOwnership(pitch, userId);
+
   if (pitch.status !== "draft") {
     throw ApiError.badRequest(`Cannot publish a ${pitch.status} pitch`);
   }
 
-  // 1. Profile must be complete
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
-  if (!user.isProfileComplete) {
-    throw ApiError.badRequest("Complete your profile before publishing a pitch");
+  // 1. Business profile must be complete
+  if (!business.isProfileComplete) {
+    throw ApiError.badRequest(
+      "Complete your business profile before publishing a pitch"
+    );
   }
 
   // 2. Required fields must be present
@@ -127,16 +154,16 @@ export const publishPitch = async (pitchId, userId) => {
     throw ApiError.badRequest("Pitch is incomplete", { missingFields: missing });
   }
 
-  // 3. No other live pitch (one live pitch per business)
+  // 3. No other live pitch for this business
   const existingLive = await db.query.pitches.findFirst({
     where: and(
-      eq(pitches.businessId, userId),
+      eq(pitches.businessId, pitch.businessId),
       eq(pitches.status, "live")
     ),
   });
   if (existingLive) {
     throw ApiError.conflict(
-      "You already have a live pitch. Close it before publishing a new one."
+      "This business already has a live pitch. Close it before publishing a new one."
     );
   }
 
@@ -158,11 +185,10 @@ export const closePitch = async (pitchId, userId) => {
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
-
   if (!pitch) throw ApiError.notFound("Pitch not found");
-  if (pitch.businessId !== userId) {
-    throw ApiError.forbidden("You do not own this pitch");
-  }
+
+  await assertPitchOwnership(pitch, userId);
+
   if (pitch.status !== "live") {
     throw ApiError.badRequest(`Cannot close a ${pitch.status} pitch`);
   }
@@ -185,11 +211,10 @@ export const deletePitch = async (pitchId, userId) => {
   const pitch = await db.query.pitches.findFirst({
     where: eq(pitches.id, pitchId),
   });
-
   if (!pitch) throw ApiError.notFound("Pitch not found");
-  if (pitch.businessId !== userId) {
-    throw ApiError.forbidden("You do not own this pitch");
-  }
+
+  await assertPitchOwnership(pitch, userId);
+
   if (pitch.status !== "draft") {
     throw ApiError.badRequest("Only draft pitches can be deleted");
   }
@@ -200,11 +225,12 @@ export const deletePitch = async (pitchId, userId) => {
 
 // ---------- List live pitches (investor feed) ----------
 export const listLivePitches = async (filters = {}) => {
-  const { stage, revenueRange, limit = 50, offset = 0 } = filters;
+  const { stage, revenueRange, businessId, limit = 50, offset = 0 } = filters;
 
   const conditions = [eq(pitches.status, "live")];
   if (stage) conditions.push(eq(pitches.stage, stage));
   if (revenueRange) conditions.push(eq(pitches.revenueRange, revenueRange));
+  if (businessId) conditions.push(eq(pitches.businessId, businessId));
 
   return await db.query.pitches.findMany({
     where: and(...conditions),

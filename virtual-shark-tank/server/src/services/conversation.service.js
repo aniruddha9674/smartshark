@@ -122,7 +122,6 @@ export const listConversations = async (userId, { limit = 20, offset = 0 } = {})
     .select({
       id: users.id,
       name: users.name,
-      role: users.role,
       avatarUrl: users.avatarUrl,
     })
     .from(users)
@@ -143,22 +142,20 @@ export const listConversations = async (userId, { limit = 20, offset = 0 } = {})
     .where(inArray(messages.conversationId, conversationIds))
     .orderBy(desc(messages.createdAt));
 
-  // 4. Aggregate in JS: latest message + unread count per conversation
+  // 4. Aggregate in JS
   const lastMessageMap = new Map();
   const unreadMap = new Map();
 
   for (const m of allMessages) {
-    // Latest message — first one wins because query is DESC
     if (!lastMessageMap.has(m.conversationId)) {
       lastMessageMap.set(m.conversationId, m);
     }
-    // Unread count — others' messages only
     if (m.isRead === false && m.senderId !== userId) {
       unreadMap.set(m.conversationId, (unreadMap.get(m.conversationId) || 0) + 1);
     }
   }
 
-  // 5. Total count (for pagination meta)
+  // 5. Total count for pagination
   const [totalRow] = await db
     .select({ count: sql`count(*)`.mapWith(Number) })
     .from(conversations)

@@ -3,76 +3,135 @@ import { eq } from "drizzle-orm";
 import { db } from "../../src/config/db.postgres.js";
 import {
   users,
-  businessProfiles,
+  businesses,
   profileEditHistory,
 } from "../../src/models/postgres/index.js";
 import * as service from "../../src/services/businessProfile.service.js";
 import { ApiError } from "../../src/utils/apiError.js";
 
 // ---- Helpers ----
-const createBusinessUser = async (overrides = {}) => {
+const createUser = async () => {
   const [user] = await db
     .insert(users)
     .values({
       name: "Alice Sharma",
-      email: `alice-${Date.now()}-${Math.random()}@example.com`,
-      passwordHash: "$2b$12$fakehashfakehashfakehash",
-      role: "business",
-      ...overrides,
+      email: `u-${Date.now()}-${Math.random()}@example.com`,
+      passwordHash: "$2b$12$fake",
     })
     .returning();
-
-  await db.insert(businessProfiles).values({ userId: user.id });
   return user;
+};
+
+const createBusinessFor = async (ownerId, overrides = {}) => {
+  const [b] = await db
+    .insert(businesses)
+    .values({ ownerId, ...overrides })
+    .returning();
+  return b;
 };
 
 describe("businessProfile.service", () => {
   beforeEach(async () => {
-    await db.delete(users); // cascades
+    await db.delete(users); // cascades to businesses + profile_edit_history
   });
 
-  // ---------- getBusinessProfile ----------
-  describe("getBusinessProfile", () => {
-    it("returns the profile for a business user", async () => {
-      const user = await createBusinessUser();
-      const profile = await service.getBusinessProfile(user.id);
-
-      expect(profile.userId).toBe(user.id);
-      expect(profile.companyName).toBeNull();
+  // ---------- createBusiness ----------
+  describe("createBusiness", () => {
+    it("creates a business owned by the user", async () => {
+      const user = await createUser();
+      const business = await service.createBusiness(user.id, {
+        companyName: "Acme Pvt Ltd",
+      });
+      expect(business.ownerId).toBe(user.id);
+      expect(business.companyName).toBe("Acme Pvt Ltd");
+      expect(business.isProfileComplete).toBe(false);
     });
 
-    it("throws 404 if no profile exists", async () => {
-      const fakeId = "00000000-0000-0000-0000-000000000000";
-      await expect(service.getBusinessProfile(fakeId)).rejects.toThrow(ApiError);
+    it("allows a user to own multiple businesses", async () => {
+      const user = await createUser();
+      await service.createBusiness(user.id, { companyName: "Acme" });
+      await service.createBusiness(user.id, { companyName: "Beta" });
+
+      const list = await service.listMyBusinesses(user.id);
+      expect(list.length).toBe(2);
     });
   });
 
-  // ---------- updateBusinessProfile ----------
-  describe("updateBusinessProfile", () => {
+  // ---------- listMyBusinesses ----------
+  describe("listMyBusinesses", () => {
+    it("returns only businesses owned by the user", async () => {
+      const a = await createUser();
+      const b = await createUser();
+      await createBusinessFor(a.id, { companyName: "A's Biz" });
+      await createBusinessFor(b.id, { companyName: "B's Biz" });
+
+      const list = await service.listMyBusinesses(a.id);
+      expect(list.length).toBe(1);
+      expect(list[0].companyName).toBe("A's Biz");
+    });
+
+    it("returns empty when user owns nothing", async () => {
+      const user = await createUser();
+      const list = await service.listMyBusinesses(user.id);
+      expect(list).toEqual([]);
+    });
+  });
+
+  // ---------- getBusiness ----------
+  describe("getBusiness", () => {
+    it("returns the business for its owner", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id, { companyName: "Acme" });
+
+      const result = await service.getBusiness(biz.id, user.id);
+      expect(result.id).toBe(biz.id);
+    });
+
+    it("throws 403 for a non-owner", async () => {
+      const owner = await createUser();
+      const attacker = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      await expect(service.getBusiness(biz.id, attacker.id)).rejects.toThrow(ApiError);
+    });
+
+    it("throws 404 for a nonexistent business", async () => {
+      const user = await createUser();
+      const fake = "00000000-0000-0000-0000-000000000000";
+      await expect(service.getBusiness(fake, user.id)).rejects.toThrow(ApiError);
+    });
+  });
+
+  // ---------- updateBusiness ----------
+  describe("updateBusiness", () => {
     it("updates a single field", async () => {
-      const user = await createBusinessUser();
-      const updated = await service.updateBusinessProfile(user.id, user.id, {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
+
+      const updated = await service.updateBusiness(biz.id, user.id, {
         companyName: "Acme Pvt Ltd",
       });
       expect(updated.companyName).toBe("Acme Pvt Ltd");
     });
 
     it("updates multiple fields at once", async () => {
-      const user = await createBusinessUser();
-      const updated = await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme Pvt Ltd",
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
+
+      const updated = await service.updateBusiness(biz.id, user.id, {
+        companyName: "Acme",
         city: "Bangalore",
         fundingAsk: 5000000,
       });
-
-      expect(updated.companyName).toBe("Acme Pvt Ltd");
+      expect(updated.companyName).toBe("Acme");
       expect(updated.city).toBe("Bangalore");
-      expect(updated.fundingAsk).toBe("5000000"); // numeric returns string
     });
 
     it("writes one audit row per changed field", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
+
+      await service.updateBusiness(biz.id, user.id, {
         companyName: "Acme",
         city: "Mumbai",
       });
@@ -80,123 +139,66 @@ describe("businessProfile.service", () => {
       const history = await db
         .select()
         .from(profileEditHistory)
-        .where(eq(profileEditHistory.businessId, user.id));
-
+        .where(eq(profileEditHistory.businessId, biz.id));
       expect(history.length).toBe(2);
-      expect(history.map((h) => h.fieldName).sort()).toEqual([
-        "city",
-        "companyName",
-      ]);
+    });
+
+    it("does NOT write an audit row when value is unchanged", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id, { companyName: "Acme" });
+
+      await service.updateBusiness(biz.id, user.id, { companyName: "Acme" });
+
+      const history = await db
+        .select()
+        .from(profileEditHistory)
+        .where(eq(profileEditHistory.businessId, biz.id));
+      expect(history.length).toBe(0);
     });
 
     it("records oldValue and newValue correctly", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "First Name",
-      });
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Second Name",
-      });
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id, { companyName: "First" });
 
-      const history = await db
-        .select()
-        .from(profileEditHistory)
-        .where(eq(profileEditHistory.fieldName, "companyName"));
+      await service.updateBusiness(biz.id, user.id, { companyName: "Second" });
 
-      expect(history.length).toBe(2);
-      // Oldest first: (null → "First Name")
-      const first = history.find((h) => h.oldValue === null);
-      const second = history.find((h) => h.oldValue === "First Name");
-      expect(first.newValue).toBe("First Name");
-      expect(second.newValue).toBe("Second Name");
-    });
-
-    it("does NOT write an audit row when the value is unchanged", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme",
-      });
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme", // same value
-      });
-
-      const history = await db
-        .select()
-        .from(profileEditHistory)
-        .where(eq(profileEditHistory.businessId, user.id));
-
-      expect(history.length).toBe(1); // only the first change
-    });
-
-    it("returns current profile unchanged when no fields differ", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme",
-      });
-      const same = await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme",
-      });
-      expect(same.companyName).toBe("Acme");
-    });
-
-    it("stores the editor id in the audit row", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        city: "Delhi",
-      });
       const [row] = await db
         .select()
         .from(profileEditHistory)
-        .where(eq(profileEditHistory.businessId, user.id));
-      expect(row.editedById).toBe(user.id);
+        .where(eq(profileEditHistory.businessId, biz.id));
+      expect(row.oldValue).toBe("First");
+      expect(row.newValue).toBe("Second");
     });
 
-    it("throws 404 if profile does not exist", async () => {
-      const fakeId = "00000000-0000-0000-0000-000000000000";
+    it("rejects a non-owner", async () => {
+      const owner = await createUser();
+      const attacker = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
       await expect(
-        service.updateBusinessProfile(fakeId, fakeId, { city: "X" })
+        service.updateBusiness(biz.id, attacker.id, { companyName: "Hijacked" })
       ).rejects.toThrow(ApiError);
     });
   });
 
-  // ---------- completeBusinessProfile ----------
-  describe("completeBusinessProfile", () => {
-    it("throws 400 listing missing fields when profile is empty", async () => {
-      const user = await createBusinessUser();
+  // ---------- completeBusiness ----------
+  describe("completeBusiness", () => {
+    it("throws 400 listing missing fields when empty", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
 
       try {
-        await service.completeBusinessProfile(user.id);
+        await service.completeBusiness(biz.id, user.id);
         expect.fail("Should have thrown");
       } catch (err) {
-        expect(err).toBeInstanceOf(ApiError);
         expect(err.statusCode).toBe(400);
         expect(err.details.missingFields).toContain("companyName");
-        expect(err.details.missingFields).toContain("sector");
-        expect(err.details.missingFields.length).toBe(6);
       }
     });
 
-    it("throws 400 listing only the still-missing fields", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme",
-        sector: "SaaS",
-        city: "Bangalore",
-        description: "We do SaaS things",
-        fundingAsk: 5000000,
-      });
-
-      try {
-        await service.completeBusinessProfile(user.id);
-        expect.fail("Should have thrown");
-      } catch (err) {
-        expect(err.details.missingFields).toEqual(["yearsOperating"]);
-      }
-    });
-
-    it("sets isProfileComplete to true when all required fields are present", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
+    it("sets isProfileComplete when all required fields present", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id, {
         companyName: "Acme",
         sector: "SaaS",
         city: "Bangalore",
@@ -205,19 +207,19 @@ describe("businessProfile.service", () => {
         yearsOperating: 3,
       });
 
-      const result = await service.completeBusinessProfile(user.id);
+      const result = await service.completeBusiness(biz.id, user.id);
       expect(result.isProfileComplete).toBe(true);
 
-      const [updatedUser] = await db
+      const [updated] = await db
         .select()
-        .from(users)
-        .where(eq(users.id, user.id));
-      expect(updatedUser.isProfileComplete).toBe(true);
+        .from(businesses)
+        .where(eq(businesses.id, biz.id));
+      expect(updated.isProfileComplete).toBe(true);
     });
 
-    it("is idempotent — calling twice succeeds", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
+    it("is idempotent", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id, {
         companyName: "Acme",
         sector: "SaaS",
         city: "Bangalore",
@@ -226,55 +228,51 @@ describe("businessProfile.service", () => {
         yearsOperating: 3,
       });
 
-      await service.completeBusinessProfile(user.id);
-      await service.completeBusinessProfile(user.id);
-      // No error = pass
+      await service.completeBusiness(biz.id, user.id);
+      await service.completeBusiness(biz.id, user.id);
     });
 
-    it("does not write to profile_edit_history", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Acme",
-        sector: "SaaS",
-        city: "Bangalore",
-        description: "We do SaaS things",
-        fundingAsk: 5000000,
-        yearsOperating: 3,
-      });
-      await service.completeBusinessProfile(user.id);
+    it("rejects a non-owner", async () => {
+      const owner = await createUser();
+      const attacker = await createUser();
+      const biz = await createBusinessFor(owner.id);
 
-      const history = await db
-        .select()
-        .from(profileEditHistory)
-        .where(eq(profileEditHistory.businessId, user.id));
-
-      // Only the 6 updates from the PATCH, none from complete
-      expect(history.length).toBe(6);
+      await expect(
+        service.completeBusiness(biz.id, attacker.id)
+      ).rejects.toThrow(ApiError);
     });
   });
 
-  // ---------- getBusinessProfileHistory ----------
-  describe("getBusinessProfileHistory", () => {
+  // ---------- getBusinessHistory ----------
+  describe("getBusinessHistory", () => {
     it("returns edits newest first", async () => {
-      const user = await createBusinessUser();
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "First",
-      });
-      await new Promise((r) => setTimeout(r, 50)); // ensure timestamps differ
-      await service.updateBusinessProfile(user.id, user.id, {
-        companyName: "Second",
-      });
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
 
-      const history = await service.getBusinessProfileHistory(user.id);
+      await service.updateBusiness(biz.id, user.id, { companyName: "First" });
+      await new Promise((r) => setTimeout(r, 20));
+      await service.updateBusiness(biz.id, user.id, { companyName: "Second" });
+
+      const history = await service.getBusinessHistory(biz.id, user.id);
       expect(history.length).toBe(2);
-      expect(history[0].newValue).toBe("Second"); // newest first
-      expect(history[1].newValue).toBe("First");
+      expect(history[0].newValue).toBe("Second");
     });
 
-    it("returns empty array when there are no edits", async () => {
-      const user = await createBusinessUser();
-      const history = await service.getBusinessProfileHistory(user.id);
+    it("returns empty array when no edits", async () => {
+      const user = await createUser();
+      const biz = await createBusinessFor(user.id);
+      const history = await service.getBusinessHistory(biz.id, user.id);
       expect(history).toEqual([]);
+    });
+
+    it("rejects a non-owner", async () => {
+      const owner = await createUser();
+      const attacker = await createUser();
+      const biz = await createBusinessFor(owner.id);
+
+      await expect(
+        service.getBusinessHistory(biz.id, attacker.id)
+      ).rejects.toThrow(ApiError);
     });
   });
 });

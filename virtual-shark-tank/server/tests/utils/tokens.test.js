@@ -11,20 +11,20 @@ import { env } from "../../src/config/env.js";
 describe("tokens utils", () => {
   describe("access token (JWT)", () => {
     it("signs a token with the given payload", () => {
-      const token = signAccessToken({ id: "user-123", role: "investor" });
+      const token = signAccessToken({ id: "user-123", isAdmin: false });
       expect(typeof token).toBe("string");
       expect(token.split(".").length).toBe(3); // header.payload.signature
     });
 
     it("verifies a valid token and returns the payload", () => {
-      const token = signAccessToken({ id: "user-123", role: "investor" });
+      const token = signAccessToken({ id: "user-123", isAdmin: false });
       const payload = verifyAccessToken(token);
       expect(payload.id).toBe("user-123");
-      expect(payload.role).toBe("investor");
+      expect(payload.isAdmin).toBe(false);
     });
 
     it("includes iat and exp claims", () => {
-      const token = signAccessToken({ id: "user-123", role: "investor" });
+      const token = signAccessToken({ id: "user-123", isAdmin: false });
       const payload = verifyAccessToken(token);
       expect(payload.iat).toBeDefined();
       expect(payload.exp).toBeDefined();
@@ -33,7 +33,7 @@ describe("tokens utils", () => {
 
     it("rejects a token signed with a different secret", () => {
       const forged = jwt.sign(
-        { id: "attacker", role: "admin" },
+        { id: "attacker", isAdmin: true },
         "not-the-real-secret"
       );
       expect(() => verifyAccessToken(forged)).toThrow();
@@ -44,13 +44,13 @@ describe("tokens utils", () => {
     });
 
     it("rejects a tampered token", () => {
-      const token = signAccessToken({ id: "user-123", role: "investor" });
+      const token = signAccessToken({ id: "user-123", isAdmin: false });
       const tampered = token.slice(0, -5) + "xxxxx";
       expect(() => verifyAccessToken(tampered)).toThrow();
     });
 
     it("expires tokens based on configured TTL", () => {
-      const token = signAccessToken({ id: "user-123", role: "investor" });
+      const token = signAccessToken({ id: "user-123", isAdmin: false });
       const payload = verifyAccessToken(token);
       const ttlSeconds = payload.exp - payload.iat;
       // env.accessTokenTtl is "15m" → 900s

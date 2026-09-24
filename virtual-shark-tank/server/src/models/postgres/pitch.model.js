@@ -12,7 +12,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { users } from "./user.model.js";
+import { businesses } from "./businessProfile.model.js";
 
 // ---- Enums ----
 export const pitchStatusEnum = pgEnum("pitch_status", [
@@ -43,10 +43,9 @@ export const pitches = pgTable(
   "pitches",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-
     businessId: uuid("business_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => businesses.id, { onDelete: "cascade" }),
 
     // ---- Identity ----
     title: varchar("title", { length: 255 }).notNull(),

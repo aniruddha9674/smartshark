@@ -2,20 +2,66 @@ import { Router } from "express";
 import * as investorProfileController from "../controllers/investorProfile.controller.js";
 import { validate } from "../middleware/validate.middleware.js";
 import { updateInvestorProfileSchema } from "../validators/investorProfile.validator.js";
-import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import { requireAuth, requireInvestor } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
 
-router.use(requireAuth, requireRole("investor"));
+router.use(requireAuth);
+
+/**
+ * @openapi
+ * /api/investor/me:
+ *   post:
+ *     tags: [Investor Profile]
+ *     summary: Become an investor (create investor profile)
+ *     description: |
+ *       Creates an investor profile for the authenticated user. Idempotent —
+ *       if a profile already exists, returns it with 200 instead of 201.
+ *
+ *       Any authenticated user can call this. Once created, the user can
+ *       access all other investor endpoints and appears in business feeds
+ *       as a potential investor.
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Investor profile created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 profile:
+ *                   $ref: '#/components/schemas/InvestorProfile'
+ *       200:
+ *         description: Investor profile already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 profile:
+ *                   $ref: '#/components/schemas/InvestorProfile'
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.post(
+  "/me",
+  asyncHandler(investorProfileController.createOrGet)
+);
 
 /**
  * @openapi
  * /api/investor/me:
  *   get:
  *     tags: [Investor Profile]
- *     summary: Get the current investor's profile
- *     description: Returns the investor profile for the authenticated investor user. Requires role=investor.
+ *     summary: Get my investor profile
+ *     description: Returns the authenticated user's investor profile. Requires an existing investor profile (call POST /me first).
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -29,32 +75,28 @@ router.use(requireAuth, requireRole("investor"));
  *                 profile:
  *                   $ref: '#/components/schemas/InvestorProfile'
  *       401:
- *         description: No token or invalid token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Not authenticated
  *       403:
- *         description: Not an investor user
+ *         description: No investor profile — call POST /api/investor/me first
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: Profile not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get("/me", asyncHandler(investorProfileController.getMe));
+router.get(
+  "/me",
+  requireInvestor,
+  asyncHandler(investorProfileController.getMe)
+);
 
 /**
  * @openapi
  * /api/investor/me:
  *   patch:
  *     tags: [Investor Profile]
- *     summary: Update the current investor's profile
+ *     summary: Update my investor profile
  *     description: |
  *       Partial update — send only the fields you want to change.
  *
@@ -97,7 +139,7 @@ router.get("/me", asyncHandler(investorProfileController.getMe));
  *                 example: ABCDE1234F
  *     responses:
  *       200:
- *         description: Updated profile
+ *         description: Updated investor profile
  *         content:
  *           application/json:
  *             schema:
@@ -106,7 +148,7 @@ router.get("/me", asyncHandler(investorProfileController.getMe));
  *                 profile:
  *                   $ref: '#/components/schemas/InvestorProfile'
  *       400:
- *         description: Validation failed (e.g. min > max, negative ticket size, empty body)
+ *         description: Validation failed (e.g. min > max, empty body)
  *         content:
  *           application/json:
  *             schema:
@@ -114,12 +156,13 @@ router.get("/me", asyncHandler(investorProfileController.getMe));
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not an investor user
+ *         description: No investor profile
  *       404:
  *         description: Profile not found
  */
 router.patch(
   "/me",
+  requireInvestor,
   validate(updateInvestorProfileSchema),
   asyncHandler(investorProfileController.updateMe)
 );
@@ -132,12 +175,13 @@ router.patch(
  *     summary: Mark the investor profile as complete
  *     description: |
  *       Validates that all required fields are present, then sets
- *       `users.isProfileComplete = true`. Once complete, the investor
+ *       `investor_profiles.is_complete = true`. Once complete, the investor
  *       appears live on the platform and can be matched with businesses.
  *
- *       Required fields: firmName, investmentFocus, preferredGeography, minTicketSize, maxTicketSize.
+ *       Required fields: firmName, investmentFocus, preferredGeography,
+ *       minTicketSize, maxTicketSize.
  *
- *       This endpoint is idempotent — calling it multiple times is safe.
+ *       Idempotent — calling multiple times is safe.
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -148,7 +192,7 @@ router.patch(
  *             schema:
  *               type: object
  *               properties:
- *                 isProfileComplete:
+ *                 isComplete:
  *                   type: boolean
  *                   example: true
  *       400:
@@ -172,12 +216,13 @@ router.patch(
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not an investor user
+ *         description: No investor profile
  *       404:
  *         description: Profile not found
  */
 router.post(
   "/complete",
+  requireInvestor,
   asyncHandler(investorProfileController.complete)
 );
 

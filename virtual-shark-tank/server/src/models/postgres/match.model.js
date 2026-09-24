@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { users } from "./user.model.js";
+import { businesses } from "./businessProfile.model.js";
 
 export const matchStatusEnum = pgEnum("match_status", [
   "pending",
@@ -25,9 +26,9 @@ export const matches = pgTable(
   "matches",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    businessId: uuid("business_id")
+       businessId: uuid("business_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => businesses.id, { onDelete: "cascade" }),
     investorId: uuid("investor_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -63,5 +64,6 @@ export const matches = pgTable(
       "no_self_match",
       sql`${table.businessId} <> ${table.investorId}`
     ),
+    
   })
 );

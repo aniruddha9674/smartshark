@@ -5,7 +5,7 @@ import {
   createPitchSchema,
   updatePitchSchema,
 } from "../validators/pitch.validator.js";
-import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import { requireAuth } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
@@ -15,32 +15,26 @@ const router = Router();
  * /api/pitches:
  *   get:
  *     tags: [Pitches]
- *     summary: List all live pitches (investor feed base)
- *     description: Returns only pitches with status=live, newest first. Supports stage and revenueRange filters.
+ *     summary: List all live pitches (investor feed)
+ *     description: Returns only pitches with status=live, newest first. Supports stage, revenueRange, and businessId filters.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: stage
- *         schema:
- *           type: string
- *           enum: [idea, mvp, early_revenue, growth, scale]
+ *         schema: { type: string, enum: [idea, mvp, early_revenue, growth, scale] }
  *       - in: query
  *         name: revenueRange
- *         schema:
- *           type: string
- *           enum: [pre_revenue, under_10L, 10L_1Cr, 1Cr_10Cr, 10Cr_plus]
+ *         schema: { type: string, enum: [pre_revenue, under_10L, 10L_1Cr, 1Cr_10Cr, 10Cr_plus] }
+ *       - in: query
+ *         name: businessId
+ *         schema: { type: string, format: uuid }
  *       - in: query
  *         name: limit
- *         schema:
- *           type: integer
- *           default: 50
- *           maximum: 100
+ *         schema: { type: integer, default: 50, maximum: 100 }
  *       - in: query
  *         name: offset
- *         schema:
- *           type: integer
- *           default: 0
+ *         schema: { type: integer, default: 0 }
  *     responses:
  *       200:
  *         description: Live pitches
@@ -51,14 +45,9 @@ const router = Router();
  *               properties:
  *                 pitches:
  *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Pitch'
+ *                   items: { $ref: '#/components/schemas/Pitch' }
  *       401:
  *         description: Not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/", requireAuth, asyncHandler(pitchController.listLive));
 
@@ -67,13 +56,18 @@ router.get("/", requireAuth, asyncHandler(pitchController.listLive));
  * /api/pitches/me:
  *   get:
  *     tags: [Pitches]
- *     summary: List my pitches (business owner)
- *     description: Returns all pitches owned by the authenticated business, in any status (draft, live, closed).
+ *     summary: List my pitches for a specific business
+ *     description: Returns all pitches owned by the given business (any status). Requires businessId query param and ownership of that business.
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: businessId
+ *         required: true
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: My pitches, newest first
+ *         description: My pitches
  *         content:
  *           application/json:
  *             schema:
@@ -81,19 +75,15 @@ router.get("/", requireAuth, asyncHandler(pitchController.listLive));
  *               properties:
  *                 pitches:
  *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Pitch'
+ *                   items: { $ref: '#/components/schemas/Pitch' }
+ *       400:
+ *         description: businessId query param missing
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not a business user
+ *         description: You do not own this business
  */
-router.get(
-  "/me",
-  requireAuth,
-  requireRole("business"),
-  asyncHandler(pitchController.listMine)
-);
+router.get("/me", requireAuth, asyncHandler(pitchController.listMine));
 
 /**
  * @openapi
@@ -101,15 +91,7 @@ router.get(
  *   post:
  *     tags: [Pitches]
  *     summary: Create a draft pitch
- *     description: |
- *       Creates a new pitch with status=draft. Required fields are only `title`,
- *       `askAmount`, and `equityOffered` — everything else can be filled in
- *       via PATCH before publishing.
- *
- *       `valuation` is computed automatically as `askAmount / (equityOffered / 100)`.
- *
- *       The `status` field is stripped from the body — a business cannot
- *       self-publish on create.
+ *     description: Creates a draft pitch for a business you own. `businessId` is required in the body.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -126,19 +108,19 @@ router.get(
  *             schema:
  *               type: object
  *               properties:
- *                 pitch:
- *                   $ref: '#/components/schemas/Pitch'
+ *                 pitch: { $ref: '#/components/schemas/Pitch' }
  *       400:
  *         description: Validation failed
  *       401:
  *         description: Not authenticated
  *       403:
- *         description: Not a business user
+ *         description: You do not own this business
+ *       404:
+ *         description: Business not found
  */
 router.post(
   "/",
   requireAuth,
-  requireRole("business"),
   validate(createPitchSchema),
   asyncHandler(pitchController.create)
 );
@@ -149,19 +131,14 @@ router.post(
  *   get:
  *     tags: [Pitches]
  *     summary: Get a pitch by ID
- *     description: |
- *       Returns a pitch. The owner can see any status; anyone else can only
- *       see live pitches. Non-owners requesting a draft get 404 (not 403) so
- *       the existence of drafts is not leaked.
+ *     description: Owner sees any status; others see only live pitches.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
- *         schema:
- *           type: string
- *           format: uuid
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
  *         description: Pitch
@@ -170,12 +147,11 @@ router.post(
  *             schema:
  *               type: object
  *               properties:
- *                 pitch:
- *                   $ref: '#/components/schemas/Pitch'
+ *                 pitch: { $ref: '#/components/schemas/Pitch' }
  *       401:
  *         description: Not authenticated
  *       404:
- *         description: Pitch not found, or not visible to this user
+ *         description: Pitch not found or not visible
  */
 router.get("/:id", requireAuth, asyncHandler(pitchController.getOne));
 
@@ -185,21 +161,14 @@ router.get("/:id", requireAuth, asyncHandler(pitchController.getOne));
  *   patch:
  *     tags: [Pitches]
  *     summary: Update a draft pitch
- *     description: |
- *       Only the owner can update. Only `draft` pitches are editable —
- *       live and closed pitches are immutable.
- *
- *       Partial update: send only the fields you want to change.
- *       If `askAmount` or `equityOffered` changes, `valuation` is recomputed.
+ *     description: Only the owner can update. Only draft pitches are editable.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
- *         schema:
- *           type: string
- *           format: uuid
+ *         schema: { type: string, format: uuid }
  *     requestBody:
  *       required: true
  *       content:
@@ -209,15 +178,8 @@ router.get("/:id", requireAuth, asyncHandler(pitchController.getOne));
  *     responses:
  *       200:
  *         description: Updated pitch
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 pitch:
- *                   $ref: '#/components/schemas/Pitch'
  *       400:
- *         description: Validation failed, or pitch is not editable
+ *         description: Not editable
  *       401:
  *         description: Not authenticated
  *       403:
@@ -228,7 +190,6 @@ router.get("/:id", requireAuth, asyncHandler(pitchController.getOne));
 router.patch(
   "/:id",
   requireAuth,
-  requireRole("business"),
   validate(updatePitchSchema),
   asyncHandler(pitchController.update)
 );
@@ -238,44 +199,20 @@ router.patch(
  * /api/pitches/{id}/publish:
  *   post:
  *     tags: [Pitches]
- *     summary: Publish a draft pitch (draft → live)
- *     description: |
- *       Moves a pitch from `draft` to `live`. Enforces four rules:
- *
- *       1. Only the owner can publish.
- *       2. The pitch must be in `draft` status.
- *       3. The business profile must be complete (`users.isProfileComplete = true`).
- *       4. All required fields must be present on the pitch:
- *          `title`, `tagline`, `shortPitch`, `longSummary`,
- *          `askAmount`, `equityOffered`, `stage`, `revenueRange`.
- *
- *       Additionally, a business can have **only one live pitch at a time**.
- *       Publishing a second pitch while another is live returns 409.
+ *     summary: Publish a draft pitch
+ *     description: Moves draft → live. Requires complete business profile, all required fields, and no other live pitch for the same business.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
- *         schema:
- *           type: string
- *           format: uuid
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Pitch published
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 pitch:
- *                   $ref: '#/components/schemas/Pitch'
+ *         description: Published
  *       400:
- *         description: Pitch is incomplete or not in draft status
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *         description: Pitch incomplete or wrong status
  *       401:
  *         description: Not authenticated
  *       403:
@@ -284,48 +221,28 @@ router.patch(
  *         description: Pitch not found
  *       409:
  *         description: Business already has a live pitch
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post(
-  "/:id/publish",
-  requireAuth,
-  requireRole("business"),
-  asyncHandler(pitchController.publish)
-);
+router.post("/:id/publish", requireAuth, asyncHandler(pitchController.publish));
 
 /**
  * @openapi
  * /api/pitches/{id}/close:
  *   post:
  *     tags: [Pitches]
- *     summary: Close a live pitch (live → closed)
- *     description: |
- *       Moves a pitch from `live` to `closed`. Sets `closedAt`. Only the
- *       owner can close. Once closed, a pitch cannot be edited or reopened.
+ *     summary: Close a live pitch
+ *     description: Moves live → closed. Only the owner can close.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
- *         schema:
- *           type: string
- *           format: uuid
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Pitch closed
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 pitch:
- *                   $ref: '#/components/schemas/Pitch'
+ *         description: Closed
  *       400:
- *         description: Pitch is not in live status
+ *         description: Not live
  *       401:
  *         description: Not authenticated
  *       403:
@@ -333,12 +250,7 @@ router.post(
  *       404:
  *         description: Pitch not found
  */
-router.post(
-  "/:id/close",
-  requireAuth,
-  requireRole("business"),
-  asyncHandler(pitchController.close)
-);
+router.post("/:id/close", requireAuth, asyncHandler(pitchController.close));
 
 /**
  * @openapi
@@ -346,31 +258,19 @@ router.post(
  *   delete:
  *     tags: [Pitches]
  *     summary: Delete a draft pitch
- *     description: |
- *       Deletes a pitch. Only `draft` pitches can be deleted — live and
- *       closed pitches must be kept for history.
+ *     description: Only draft pitches can be deleted.
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
- *         schema:
- *           type: string
- *           format: uuid
+ *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Pitch deleted
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 deleted:
- *                   type: boolean
- *                   example: true
+ *         description: Deleted
  *       400:
- *         description: Only draft pitches can be deleted
+ *         description: Only drafts can be deleted
  *       401:
  *         description: Not authenticated
  *       403:
@@ -378,11 +278,6 @@ router.post(
  *       404:
  *         description: Pitch not found
  */
-router.delete(
-  "/:id",
-  requireAuth,
-  requireRole("business"),
-  asyncHandler(pitchController.remove)
-);
+router.delete("/:id", requireAuth, asyncHandler(pitchController.remove));
 
 export default router;

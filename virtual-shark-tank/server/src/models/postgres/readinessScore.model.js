@@ -9,15 +9,15 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { users } from "./user.model.js";
+import { businesses } from "./businessProfile.model.js";
 
 export const readinessScores = pgTable(
   "readiness_scores",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    businessId: uuid("business_id")
+        businessId: uuid("business_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => businesses.id, { onDelete: "cascade" }),
 
     score: integer("score").notNull(),          // 0–100
     modelVersion: varchar("model_version", { length: 50 }).notNull(),
