@@ -1,16 +1,19 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import "./theme/theme.css";
-
-import Landing from "./pages/Landing";
-import BusinessDashboard from "./pages/business/Dashboard";
+import Nav from "./components/Nav.jsx";
+import Hero from "./components/Hero.jsx";
+import Flow from "./components/Flow.jsx";
+import Roles from "./components/Roles.jsx";
+import Footer from "./components/Footer.jsx";
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/business/dashboard" element={<BusinessDashboard />} />
-      </Routes>
-    </BrowserRouter>
+    <>
+      <Nav />
+      <main>
+        <Hero />
+        <Flow />
+        <Roles />
+      </main>
+      <Footer />
+    </>
   );
 }

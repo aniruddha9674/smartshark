@@ -1,0 +1,73 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&display=swap");
+
+:root {
+  --paper: #eef2f3;
+  --ink: #12222e;
+  --muted: #4d6170;
+  --water: #1c4b5a;
+  --tint: #dde7ea;
+  --buzzer: #f0b92b;
+  --line: #c3d1d6;
+  --display: "Bricolage Grotesque", "Segoe UI", sans-serif;
+  --body: "Public Sans", system-ui, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 1.0625rem/1.6 var(--body); }
+h1, h2, h3 { font-family: var(--display); line-height: 1.1; margin: 0; font-weight: 700; }
+h1 { font-size: clamp(2.4rem, 5.5vw, 4.2rem); letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); letter-spacing: -0.01em; }
+h3 { font-size: 1.25rem; }
+p { margin: 0; max-width: 62ch; }
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--buzzer); outline-offset: 3px; }
+
+.wrap { width: min(1100px, 100% - 2.5rem); margin-inline: auto; }
+.section { padding: 5rem 0; }
+.section--tint { background: var(--tint); }
+
+.nav { display: flex; justify-content: space-between; align-items: center; width: min(1100px, 100% - 2.5rem); margin: 0 auto; padding: 1.25rem 0; }
+.nav__brand { font: 700 1.3rem var(--display); text-decoration: none; }
+.nav__links { display: flex; align-items: center; gap: 1.5rem; }
+.nav__links a { text-decoration: none; }
+.nav__links a:not(.btn):hover { text-decoration: underline; }
+
+.btn { display: inline-block; background: var(--water); color: #fff; padding: 0.8rem 1.4rem; border-radius: 6px; font-weight: 600; text-decoration: none; border: 2px solid var(--water); }
+.btn:hover { background: var(--ink); border-color: var(--ink); }
+.btn--ghost { background: transparent; color: var(--ink); border-color: var(--ink); }
+.btn--ghost:hover { background: var(--ink); color: #fff; }
+.btn--small { padding: 0.45rem 1rem; }
+.textlink { display: inline-block; margin-top: 1rem; font-weight: 600; text-underline-offset: 4px; }
+
+.hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 3.5rem; align-items: center; padding: 4rem 0 5rem; }
+.lead { margin-top: 1.5rem; font-size: 1.2rem; color: var(--muted); }
+.hero__actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
+.fineprint { margin-top: 1.25rem; font-size: 0.9rem; color: var(--muted); }
+
+.ticket { background: #fff; border: 2px solid var(--ink); border-radius: 4px; padding: 1.5rem; box-shadow: 8px 8px 0 var(--buzzer); }
+.ticket__title { font: 700 1.4rem var(--display); }
+.ticket__ask { margin-top: 0.25rem; color: var(--muted); }
+.ticket__offers { list-style: none; margin: 1.25rem 0 0; padding: 0; }
+.ticket__offers li { display: grid; gap: 0.15rem; padding: 0.9rem 0; border-top: 1px solid var(--line); }
+.ticket__terms { font-weight: 600; color: var(--water); }
+.ticket__note { font-size: 0.92rem; color: var(--muted); }
+.ticket__foot { margin-top: 0.75rem; font-size: 0.8rem; color: var(--muted); }
+
+.flow { list-style: none; margin: 2.5rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem; border-top: 2px solid var(--ink); }
+.flow li { padding-top: 1.25rem; }
+.flow__n { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: var(--ink); color: var(--paper); font-weight: 600; margin-bottom: 0.75rem; }
+.flow p { margin-top: 0.5rem; color: var(--muted); font-size: 1rem; }
+
+.roles { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; }
+.roles p { margin-top: 0.9rem; }
+
+.footer { display: flex; justify-content: space-between; padding: 2rem 0 3rem; color: var(--muted); font-size: 0.95rem; }
+
+@media (max-width: 860px) {
+  .hero, .roles { grid-template-columns: 1fr; gap: 2.5rem; }
+  .flow { grid-template-columns: 1fr 1fr; }
+  .nav__links a:not(.btn) { display: none; }
+}
+@media (max-width: 520px) { .flow { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
