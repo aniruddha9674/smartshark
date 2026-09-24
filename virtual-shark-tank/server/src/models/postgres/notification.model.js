@@ -21,7 +21,16 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "verification_update",
   "saved_business_activity",
   "system",
+  // Offers
+  "new_offer",
+  "offer_accepted",
+  "offer_rejected",
+  "offer_countered",
+  "offer_withdrawn",
+  "offer_expired",
 ]);
+
+
 
 export const notifications = pgTable(
   "notifications",

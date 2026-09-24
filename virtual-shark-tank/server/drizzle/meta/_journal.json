@@ -8,6 +8,13 @@
       "when": 1790241575205,
       "tag": "0000_wandering_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790256036840,
+      "tag": "0001_sticky_supernaut",
+      "breakpoints": true
     }
   ]
 }

@@ -20,3 +20,7 @@ export * from "./profileEditHistory.model.js";
 // Deal flow
 export * from "./match.model.js";
 export * from "./pitch.model.js";
+
+//offer and investment
+export * from "./offer.model.js";
+export * from "./investment.model.js";
