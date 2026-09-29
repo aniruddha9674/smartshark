@@ -13,6 +13,7 @@ import {
 import * as eventService from "../../src/services/event.service.js";
 import * as followService from "../../src/services/follow.service.js";
 import * as messageService from "../../src/services/message.service.js";
+import * as conversationService from "../../src/services/conversation.service.js";
 
 const createUser = async (overrides = {}) => {
   const [u] = await db
@@ -81,18 +82,18 @@ describe("event integration — follow + message", () => {
   });
 
   it("logs message_sent when sending a message", async () => {
-    const a = await createUser();
-    const b = await createUser();
-    const [conv] = await db
-      .insert(conversations)
-      .values({ participantAId: a.id, participantBId: b.id })
-      .returning();
+  const a = await createUser();
+  const b = await createUser();
+  const { conversation } = await conversationService.getOrCreateConversation(
+    a.id,
+    b.id
+  );
 
-    await messageService.sendMessage(conv.id, a.id, "Hello");
-    await new Promise((r) => setTimeout(r, 30));
+  await messageService.sendMessage(conversation.id, a.id, "Hello");
+  await new Promise((r) => setTimeout(r, 30));
 
-    const rows = await findEvent(a.id, "message_sent");
-    expect(rows.length).toBe(1);
-    expect(rows[0].entityId).toBe(conv.id);
-  });
+  const rows = await findEvent(a.id, "message_sent");
+  expect(rows.length).toBe(1);
+  expect(rows[0].entityId).toBe(conversation.id);
+});
 });
