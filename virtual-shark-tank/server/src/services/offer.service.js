@@ -16,6 +16,7 @@ import {
   OFFER_MAX_COUNTER_DEPTH,
   MAX_OFFERS_PER_DAY,
 } from "../validators/offer.validator.js";
+import * as eventService from "./event.service.js";
 
 // ============================================================
 // HELPERS
@@ -157,6 +158,14 @@ export const createOffer = async (investorId, data) => {
     metadata: { offerId: offer.id, pitchId, businessId: business.id },
     eventId: `offer_created:${offer.id}`,
   });
+
+  await eventService.log({
+  userId: investorId,
+  eventType: "offer_created",
+  entityType: "offer",
+  entityId: offer.id,
+  metadata: { pitchId, businessId: business.id, amount: Number(amount) },
+});
 
   return offer;
 };
@@ -358,6 +367,14 @@ export const acceptOffer = async (offerId, userId) => {
     )
   );
 
+   await eventService.log({
+  userId: offer.investorId,
+  eventType: "offer_accepted",
+  entityType: "offer",
+  entityId: offer.id,
+  metadata: { pitchId: offer.pitchId, businessId: business.id },
+});
+
   return { offer: result.accepted, investment: result.investment };
 };
 
@@ -399,6 +416,14 @@ export const rejectOffer = async (offerId, userId) => {
     metadata: { offerId: offer.id, pitchId: offer.pitchId },
     eventId: `offer_rejected:${offer.id}`,
   });
+
+  await eventService.log({
+  userId: offer.investorId,
+  eventType: "offer_rejected",
+  entityType: "offer",
+  entityId: offer.id,
+  metadata: { pitchId: offer.pitchId, businessId: offer.businessId },
+});
 
   return updated;
 };

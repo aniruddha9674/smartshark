@@ -8,6 +8,7 @@ import {
 } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
 import { createNotification } from "./notification.service.js";
+import * as eventService from "./event.service.js";
 
 // ============================================================
 // FOLLOW A BUSINESS
@@ -54,6 +55,13 @@ export const followBusiness = async (followerId, businessId) => {
       },
       eventId: `follow:${followerId}:business:${businessId}`,
     });
+    await eventService.log({
+  userId: followerId,
+  eventType: "follow_created",
+  entityType: "business",
+  entityId: businessId,
+  metadata: { ownerId: business.ownerId },
+});
   }
 
   return { following: true, alreadyFollowing: !row };
@@ -138,6 +146,13 @@ export const followInvestor = async (followerId, targetUserId) => {
       },
       eventId: `follow:${followerId}:investor:${targetUserId}`,
     });
+    await eventService.log({
+  userId: followerId,
+  eventType: "follow_created",
+  entityType: "investor",
+  entityId: targetUserId,
+  metadata: {},
+});
   }
 
   return { following: true, alreadyFollowing: !row };

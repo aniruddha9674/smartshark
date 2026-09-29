@@ -14,6 +14,7 @@ import {
 } from "../utils/tokens.js";
 import { ApiError } from "../utils/apiError.js";
 import { env } from "../config/env.js";
+import * as eventService from "./event.service.js";
 
 const REFRESH_TTL_MS = env.refreshTokenTtlDays * 24 * 60 * 60 * 1000;
 
@@ -35,6 +36,13 @@ export const registerUser = async ({ name, email, password }) => {
 
   const tokens = await issueTokens(user, null);
   const enriched = await enrichWithCapabilities(user);
+  await eventService.log({
+  userId: user.id,
+  eventType: "user_registered",
+  entityType: "user",
+  entityId: user.id,
+  metadata: {},
+});
   return { user: enriched, ...tokens };
 };
 

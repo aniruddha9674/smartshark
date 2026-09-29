@@ -8,6 +8,7 @@ import {
 import { ApiError } from "../utils/apiError.js";
 import { createNotification } from "./notification.service.js";
 import { enforceLimit } from "./rateLimit.service.js";
+import * as eventService from "./event.service.js";
 
 // Rate limits
 const MESSAGES_PER_DAY = 500;
@@ -71,6 +72,14 @@ export const sendMessage = async (conversationId, senderId, body) => {
     body: body.slice(0, 100),
     metadata: { conversationId, messageId: message.id },
   });
+
+  await eventService.log({
+  userId: senderId,
+  eventType: "message_sent",
+  entityType: "conversation",
+  entityId: conversationId,
+  metadata: { recipientId, bodyLength: body.length },
+});
 
   return message;
 };

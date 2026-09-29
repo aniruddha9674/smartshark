@@ -1,3 +1,5 @@
+
+
 export const ALLOWED_EVENTS = {
   // ─── Pitch discovery ──────────────────────────────────────────
   pitch_viewed: {
@@ -74,6 +76,44 @@ export const ALLOWED_EVENTS = {
     purpose: "User acquisition metric + funnel conversion",
     retention: "forever",
   },
+
+    // ─── Offers (extend) ──────────────────────────────────────────
+  offer_rejected: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Investment funnel: created → accepted vs rejected rate",
+    retention: "forever",
+  },
+  offer_countered: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Negotiation depth analytics",
+    retention: "forever",
+  },
+
+  // ─── Follows ──────────────────────────────────────────────────
+  follow_created: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Follower growth analytics + future feed ranking signal",
+    retention: "forever",
+  },
+
+  // ─── Messages ─────────────────────────────────────────────────
+  message_sent: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Conversation activity + engagement scoring",
+    retention: "forever",
+  },
+
+  // ─── Auth ─────────────────────────────────────────────────────
+  user_registered: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Acquisition funnel — top of funnel",
+    retention: "forever",
+  },
 };
 
 export const validateEventType = (eventType) => {
@@ -101,3 +141,4 @@ export const validateMetadata = (eventType, metadata) => {
     );
   }
 };
+
