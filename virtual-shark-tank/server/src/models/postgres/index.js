@@ -24,3 +24,9 @@ export * from "./pitch.model.js";
 //offer and investment
 export * from "./offer.model.js";
 export * from "./investment.model.js";
+
+// Activity capture — append-only, feeds analytics + ML
+export * from "./event.model.js";
+export * from "./feedImpression.model.js";
+
+export * from "./rejectedEvent.model.js";

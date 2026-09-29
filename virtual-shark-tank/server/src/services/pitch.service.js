@@ -3,6 +3,7 @@ import { db } from "../config/db.postgres.js";
 import { pitches, businesses } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
 import { REQUIRED_TO_PUBLISH } from "../validators/pitch.validator.js";
+import * as eventService from "./event.service.js";
 
 // ---------- Helpers ----------
 const computeValuation = (askAmount, equityOffered) => {
@@ -84,6 +85,15 @@ export const getPitch = async (pitchId, requestingUserId) => {
   // Owner sees any status. Everyone else only sees live pitches.
   if (!isOwner && pitch.status !== "live") {
     throw ApiError.notFound("Pitch not found");
+  }
+  if (!isOwner && requestingUserId) {
+    await eventService.log({
+      userId: requestingUserId,
+      eventType: "pitch_viewed",
+      entityType: "pitch",
+      entityId: pitchId,
+      metadata: { source: "direct" },
+    });
   }
 
   return pitch;
@@ -167,17 +177,21 @@ export const publishPitch = async (pitchId, userId) => {
     );
   }
 
-  const [updated] = await db
-    .update(pitches)
-    .set({
-      status: "live",
-      publishedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(pitches.id, pitchId))
-    .returning();
+ const [updated] = await db
+  .update(pitches)
+  .set({ status: "live", publishedAt: new Date(), updatedAt: new Date() })
+  .where(eq(pitches.id, pitchId))
+  .returning();
 
-  return updated;
+await eventService.log({
+  userId,
+  eventType: "pitch_published",
+  entityType: "pitch",
+  entityId: pitchId,
+  metadata: { businessId: pitch.businessId },
+});
+
+return updated;
 };
 
 // ---------- Close ----------
@@ -194,16 +208,20 @@ export const closePitch = async (pitchId, userId) => {
   }
 
   const [updated] = await db
-    .update(pitches)
-    .set({
-      status: "closed",
-      closedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(pitches.id, pitchId))
-    .returning();
+  .update(pitches)
+  .set({ status: "closed", closedAt: new Date(), updatedAt: new Date() })
+  .where(eq(pitches.id, pitchId))
+  .returning();
 
-  return updated;
+await eventService.log({
+  userId,
+  eventType: "pitch_closed",
+  entityType: "pitch",
+  entityId: pitchId,
+  metadata: { businessId: pitch.businessId },
+});
+
+return updated;
 };
 
 // ---------- Delete draft ----------

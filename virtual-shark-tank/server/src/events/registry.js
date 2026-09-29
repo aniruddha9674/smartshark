@@ -1,0 +1,103 @@
+export const ALLOWED_EVENTS = {
+  // ─── Pitch discovery ──────────────────────────────────────────
+  pitch_viewed: {
+    version: 1,
+    requiredFields: ["source"],
+    purpose: "Recently viewed UI + engagement analytics + ranker positive signal",
+    retention: "forever",
+  },
+  pitch_shortlisted: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Ranker positive label + pitch popularity",
+    retention: "forever",
+  },
+  pitch_dismissed: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Ranker negative label",
+    retention: "forever",
+  },
+  pitch_offered: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Strongest positive signal for ranker + funnel conversion",
+    retention: "forever",
+  },
+
+  // ─── Pitch lifecycle ──────────────────────────────────────────
+  pitch_published: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Business dashboard 'your pitches' + publish funnel metrics",
+    retention: "forever",
+  },
+  pitch_closed: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Pitch lifecycle tracking",
+    retention: "forever",
+  },
+
+  // ─── Offers ───────────────────────────────────────────────────
+  offer_created: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Investor activity feed + notification trigger",
+    retention: "forever",
+  },
+  offer_accepted: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Deal closure analytics + training label",
+    retention: "forever",
+  },
+
+  // ─── Search ───────────────────────────────────────────────────
+  search_performed: {
+    version: 1,
+    requiredFields: ["query"],
+    purpose: "Search analytics + query understanding + future autocomplete",
+    retention: "90 days",
+  },
+
+  // ─── Onboarding ───────────────────────────────────────────────
+  onboarding_step_completed: {
+    version: 1,
+    requiredFields: ["step", "stepName"],
+    purpose: "Onboarding funnel analysis + drop-off detection",
+    retention: "forever",
+  },
+  onboarding_completed: {
+    version: 1,
+    requiredFields: [],
+    purpose: "User acquisition metric + funnel conversion",
+    retention: "forever",
+  },
+};
+
+export const validateEventType = (eventType) => {
+  const spec = ALLOWED_EVENTS[eventType];
+  if (!spec) {
+    throw new Error(`Unknown event type: "${eventType}"`);
+  }
+  return spec;
+};
+
+export const validateMetadata = (eventType, metadata) => {
+  const spec = ALLOWED_EVENTS[eventType];
+  if (!spec || !spec.requiredFields.length) return;
+
+  if (!metadata || typeof metadata !== "object") {
+    throw new Error(
+      `Event "${eventType}" requires metadata with fields: ${spec.requiredFields.join(", ")}`
+    );
+  }
+
+  const missing = spec.requiredFields.filter((f) => metadata[f] === undefined);
+  if (missing.length) {
+    throw new Error(
+      `Event "${eventType}" missing required fields: ${missing.join(", ")}`
+    );
+  }
+};

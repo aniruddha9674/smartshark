@@ -51,6 +51,12 @@ const router = Router();
  */
 router.get("/", requireAuth, asyncHandler(pitchController.listLive));
 
+router.get(
+  "/recently-viewed",
+  requireAuth,
+  asyncHandler(pitchController.getRecentlyViewed)
+);
+
 /**
  * @openapi
  * /api/pitches/me:
@@ -279,5 +285,7 @@ router.post("/:id/close", requireAuth, asyncHandler(pitchController.close));
  *         description: Pitch not found
  */
 router.delete("/:id", requireAuth, asyncHandler(pitchController.remove));
+
+
 
 export default router;
