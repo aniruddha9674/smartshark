@@ -14,6 +14,7 @@ import offerRoutes from "./routes/offer.routes.js";
 import investmentRoutes from "./routes/investment.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import verificationRoutes from "./routes/verification.routes.js";
+import readinessRoutes from "./routes/readiness.routes.js";
 
 
 const app = express();
@@ -36,6 +37,7 @@ app.use("/api/offers", offerRoutes);
 app.use("/api/investments", investmentRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/verifications", verificationRoutes);
+app.use("/api/businesses", readinessRoutes);
 
 
 
