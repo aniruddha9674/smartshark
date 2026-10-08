@@ -12,6 +12,7 @@ import followRoutes from "./routes/follow.routes.js";
 import conversationRoutes from "./routes/conversation.routes.js";
 import offerRoutes from "./routes/offer.routes.js";
 import investmentRoutes from "./routes/investment.routes.js";
+import uploadRoutes from "./routes/upload.routes.js";
 
 
 const app = express();
@@ -32,6 +33,8 @@ app.use("/api/follows", followRoutes);
 app.use("/api/conversations", conversationRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/investments", investmentRoutes);
+app.use("/api/uploads", uploadRoutes);
+
 
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
