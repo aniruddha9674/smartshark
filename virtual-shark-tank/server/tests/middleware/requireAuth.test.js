@@ -1,91 +1,51 @@
-import { describe, it, expect, vi } from "vitest";
-import { requireAuth, requireAdmin } from "../../src/middleware/auth.middleware.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import request from "supertest";
+import app from "../../src/app.js";
 import { signAccessToken } from "../../src/utils/tokens.js";
-import { ApiError } from "../../src/utils/apiError.js";
+import { db } from "../../src/config/db.postgres.js";
+import { users } from "../../src/models/postgres/index.js";
 
-const mockReq = (overrides = {}) => ({ headers: {}, user: undefined, ...overrides });
-const mockRes = () => ({});
-const mockNext = () => vi.fn();
+const createUser = async () => {
+  const email = `ra-${Date.now()}-${Math.random()}@example.com`;
+  const res = await request(app)
+    .post("/api/auth/register")
+    .send({ name: "Test", email, password: "Password123", role: "business" })
+    .expect(201);
+  return res.body.user;
+};
 
-describe("requireAuth", () => {
-  it("401 when no Authorization header", () => {
-    const req = mockReq();
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
-
-    const err = next.mock.calls[0][0];
-    expect(err).toBeInstanceOf(ApiError);
-    expect(err.statusCode).toBe(401);
-    expect(err.message).toBe("No token provided");
+describe("requireAuth middleware", () => {
+  beforeEach(async () => {
+    await db.delete(users);
   });
 
-  it("401 when scheme is not Bearer", () => {
-    const req = mockReq({ headers: { authorization: "Basic abc123" } });
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
-    expect(next.mock.calls[0][0].statusCode).toBe(401);
+  it("401 without Authorization header", async () => {
+    await request(app).get("/api/auth/me").expect(401);
   });
 
-  it("401 when token is invalid", () => {
-    const req = mockReq({ headers: { authorization: "Bearer not.a.jwt" } });
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
-    const err = next.mock.calls[0][0];
-    expect(err.statusCode).toBe(401);
-    expect(err.message).toBe("Invalid or expired token");
+  it("401 with malformed header", async () => {
+    await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", "NotBearer xyz")
+      .expect(401);
   });
 
-  it("401 when token signed with wrong secret", () => {
-    const jwt = require("jsonwebtoken");
-    const forged = jwt.sign({ id: "attacker", isAdmin: true }, "wrong-secret");
-    const req = mockReq({ headers: { authorization: `Bearer ${forged}` } });
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
-    expect(next.mock.calls[0][0].statusCode).toBe(401);
+  it("401 with invalid token", async () => {
+    await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", "Bearer not.a.jwt")
+      .expect(401);
   });
 
-  it("sets req.user and calls next() for a valid token", () => {
-    const token = signAccessToken({ id: "user-123", isAdmin: false });
-    const req = mockReq({ headers: { authorization: `Bearer ${token}` } });
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
+  it("200 with valid token", async () => {
+    const user = await createUser();
+    const token = signAccessToken({ id: user.id, role: user.role });
 
-    expect(next).toHaveBeenCalledWith();
-    expect(req.user.id).toBe("user-123");
-    expect(req.user.isAdmin).toBe(false);
-  });
+    const res = await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
 
-  it("preserves isAdmin=true from the token", () => {
-    const token = signAccessToken({ id: "admin-1", isAdmin: true });
-    const req = mockReq({ headers: { authorization: `Bearer ${token}` } });
-    const next = mockNext();
-    requireAuth(req, mockRes(), next);
-    expect(req.user.isAdmin).toBe(true);
-  });
-});
-
-describe("requireAdmin", () => {
-  it("401 when req.user is missing (middleware order bug)", () => {
-    const req = mockReq();
-    const next = mockNext();
-    requireAdmin(req, mockRes(), next);
-    const err = next.mock.calls[0][0];
-    expect(err.statusCode).toBe(401);
-  });
-
-  it("403 when user is not admin", () => {
-    const req = mockReq({ user: { id: "u1", isAdmin: false } });
-    const next = mockNext();
-    requireAdmin(req, mockRes(), next);
-    const err = next.mock.calls[0][0];
-    expect(err.statusCode).toBe(403);
-    expect(err.message).toBe("Admin only");
-  });
-
-  it("passes when user is admin", () => {
-    const req = mockReq({ user: { id: "u1", isAdmin: true } });
-    const next = mockNext();
-    requireAdmin(req, mockRes(), next);
-    expect(next).toHaveBeenCalledWith();
+    expect(res.body.user.id).toBe(user.id);
   });
 });

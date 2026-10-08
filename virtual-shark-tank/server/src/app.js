@@ -16,6 +16,8 @@ import uploadRoutes from "./routes/upload.routes.js";
 import verificationRoutes from "./routes/verification.routes.js";
 import readinessRoutes from "./routes/readiness.routes.js";
 import matchRoutes from "./routes/match.routes.js";
+import healthRoutes from "./routes/health.routes.js";
+import { requestLogger, attachRequestId } from "./middleware/requestId.middleware.js";
 
 
 const app = express();
@@ -26,7 +28,9 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
-
+app.use(attachRequestId);
+app.use(requestLogger);
+app.use("/api/health", healthRoutes);
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/businesses", businessRoutes); 
