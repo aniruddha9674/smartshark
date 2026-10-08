@@ -4,6 +4,15 @@ import app from "../../src/app.js";
 import { db } from "../../src/config/db.postgres.js";
 import { users } from "../../src/models/postgres/index.js";
 
+import { vi } from "vitest";
+
+vi.mock("../../src/services/upload.service.js", () => ({
+  uploadToCloudinary: vi.fn().mockResolvedValue({
+    url: "https://res.cloudinary.com/ci-dummy/image/upload/v0/test.png",
+    publicId: "verification-docs/test/test",
+  }),
+}));
+
 const registerUser = async () => {
   const email = `up-${Date.now()}-${Math.random()}@example.com`;
   const res = await request(app)

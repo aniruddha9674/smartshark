@@ -286,8 +286,22 @@ export const applyToBusinessProfile = async (
       conflictCount: conflicts.length,
     },
   });
+  
+  
+  // Compute new tier (reads all verifications for this business)
+  const newTier = await computeVerificationTier(
+    business.id,
+    verification._id.toString()
+  );
 
-  if (newTier !== business.verificationTier) {
+  if (newTier !== updatedBusiness.verificationTier) {
+    const [b] = await db
+      .update(businesses)
+      .set({ verificationTier: newTier })
+      .where(eq(businesses.id, business.id))
+      .returning();
+    updatedBusiness = b;
+
     await eventService.log({
       userId,
       eventType: "verification_tier_changed",
@@ -306,4 +320,5 @@ export const applyToBusinessProfile = async (
     appliedFields: Object.keys(updates),
     conflicts,
   };
+
 };

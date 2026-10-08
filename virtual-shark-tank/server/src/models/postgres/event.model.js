@@ -24,7 +24,7 @@ export const events = pgTable(
     // migration every time we add one
     eventType: varchar("event_type", { length: 50 }).notNull(),
     entityType: varchar("entity_type", { length: 50 }),
-    entityId: uuid("entity_id"),
+    entityId: varchar("entity_id", { length: 225 }),
 
     // Per-event-shape payload. Documented via the code registry, not the DB
     metadata: jsonb("metadata"),
