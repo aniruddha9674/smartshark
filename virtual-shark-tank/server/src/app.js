@@ -19,21 +19,57 @@ import matchRoutes from "./routes/match.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { requestLogger, attachRequestId } from "./middleware/requestId.middleware.js";
 
-
 const app = express();
 
-app.use(cors({
-  origin: "http://localhost:5173", // your frontend
-  credentials: true,               // allow cookies
-}));
-app.use(express.json());
-app.use(cookieParser());
+// ─── 1. Trust Render's proxy so req.ip is the real client IP ───
+app.set("trust proxy", 1);
+
+// ─── 2. Request ID + logging (first, so every request is traced) ───
 app.use(attachRequestId);
 app.use(requestLogger);
+
+// ─── 3. CORS — env-driven, defaults to localhost for dev ───
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:5173"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (curl, Postman, same-origin)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+
+// ─── 4. Body + cookie parsers ───
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+
+// ─── 5. Root info route ───
+app.get("/", (req, res) => {
+  res.json({
+    name: "SmartShark API",
+    version: "1.0.0",
+    status: "running",
+    docs: "/docs",
+    health: "/api/health",
+  });
+});
+
+// ─── 6. Health check ───
 app.use("/api/health", healthRoutes);
-app.get("/health", (req, res) => res.json({ ok: true }));
+
+// ─── 7. Swagger docs ───
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// ─── 8. API routes ───
 app.use("/api/auth", authRoutes);
-app.use("/api/businesses", businessRoutes); 
+app.use("/api/businesses", businessRoutes);
+app.use("/api/businesses", readinessRoutes);
 app.use("/api/investor", investorRoutes);
 app.use("/api/pitches", pitchRoutes);
 app.use("/api/follows", followRoutes);
@@ -42,12 +78,18 @@ app.use("/api/offers", offerRoutes);
 app.use("/api/investments", investmentRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/verifications", verificationRoutes);
-app.use("/api/businesses", readinessRoutes);
 app.use("/api/matches", matchRoutes);
 
+// ─── 9. JSON 404 for anything unmatched ───
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Not found",
+    path: req.path,
+    requestId: req.id,
+  });
+});
 
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
+// ─── 10. Error handler (must be last) ───
 app.use(errorHandler);
 
 export default app;
