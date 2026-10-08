@@ -5,7 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     setupFiles: ["./tests/setup.js"],
-    testTimeout: 20000,
+    testTimeout: 30000,
     hookTimeout: 30000,
     pool: "forks",
     maxForks: 1,

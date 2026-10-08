@@ -13,6 +13,7 @@ import conversationRoutes from "./routes/conversation.routes.js";
 import offerRoutes from "./routes/offer.routes.js";
 import investmentRoutes from "./routes/investment.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
+import verificationRoutes from "./routes/verification.routes.js";
 
 
 const app = express();
@@ -34,6 +35,8 @@ app.use("/api/conversations", conversationRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/investments", investmentRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/verifications", verificationRoutes);
+
 
 
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));

@@ -114,7 +114,39 @@ export const ALLOWED_EVENTS = {
     purpose: "Acquisition funnel — top of funnel",
     retention: "forever",
   },
+    verification_started: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Verification funnel: how many uploads start",
+    retention: "forever",
+  },
+  verification_extracted: {
+    version: 1,
+    requiredFields: [],
+    purpose: "OCR performance analytics + paper training data",
+    retention: "forever",
+  },
+  verification_applied: {
+    version: 1,
+    requiredFields: [],
+    purpose: "User-confirmed OCR accuracy signal",
+    retention: "forever",
+  },
+  verification_tier_changed: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Trust tier progression analytics",
+    retention: "forever",
+  },
+  verification_failed: {
+    version: 1,
+    requiredFields: [],
+    purpose: "Failure analysis + retry decisions",
+    retention: "forever",
+  },
 };
+
+
 
 export const validateEventType = (eventType) => {
   const spec = ALLOWED_EVENTS[eventType];
