@@ -17,13 +17,13 @@ if (process.env.NODE_ENV === "test") {
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000,
-    family: 4,                        // ← FORCE IPv4 (fixes ENOTFOUND on Jio)
+    family: 4,
   });
 
   db = drizzle(pool, { schema });
 }
 
-export { db };
+export { db, pool };
 
 export const testConnection = async () => {
   if (process.env.NODE_ENV === "test") return;

@@ -29,16 +29,16 @@ const start = async () => {
     logger.info({ signal }, "Shutdown signal received — draining connections");
 
     server.close(async () => {
-      try {
-        await pool.end();
-        await mongoose.disconnect();
-        logger.info("Clean shutdown complete");
-        process.exit(0);
-      } catch (err) {
-        logger.error({ err }, "Error during shutdown");
-        process.exit(1);
-      }
-    });
+  try {
+    if (pool) await pool.end();
+    await mongoose.disconnect();
+    logger.info("Clean shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    logger.error({ err }, "Error during shutdown");
+    process.exit(1);
+  }
+});
 
     // Force-exit if graceful shutdown hangs past 30s
     setTimeout(() => {
