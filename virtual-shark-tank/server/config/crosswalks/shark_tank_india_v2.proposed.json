@@ -1,0 +1,75 @@
+{
+  "source": "shark_tank_india_v2",
+  "target": "businesses",
+  "version": 1,
+  "description": "Auto-generated crosswalk for shark_tank_india_v2",
+  "fieldMappings": {
+    "Startup Name": {
+      "field": "companyName",
+      "transform": "trim"
+    },
+    "Industry": {
+      "field": "sector",
+      "transform": "normalizeSector"
+    },
+    "Business Description": {
+      "field": "description",
+      "transform": "trim"
+    },
+    "Company Website": {
+      "field": "websiteUrl",
+      "transform": "trim"
+    },
+    "Started in": {
+      "field": "yearsOperating",
+      "transform": "toOperatingYears"
+    },
+    "Pitchers City": {
+      "field": "city",
+      "transform": "normalizeCity"
+    },
+    "Original Ask Amount": {
+      "field": "fundingAsk",
+      "transform": "lakhsToINR"
+    }
+  },
+  "validators": {
+    "companyName": {
+      "required": true,
+      "minLength": 2,
+      "maxLength": 255
+    },
+    "sector": {
+      "required": false,
+      "maxLength": 100
+    },
+    "description": {
+      "required": false,
+      "maxLength": 5000
+    },
+    "websiteUrl": {
+      "required": false,
+      "maxLength": 500
+    },
+    "yearsOperating": {
+      "required": false,
+      "type": "integer",
+      "min": 0
+    },
+    "city": {
+      "required": false,
+      "maxLength": 100
+    },
+    "fundingAsk": {
+      "required": false,
+      "type": "number",
+      "min": 0
+    }
+  },
+  "defaults": {
+    "verificationTier": "unverified",
+    "isProfileComplete": false,
+    "isExternal": true
+  },
+  "dedupeKey": "companyName"
+}

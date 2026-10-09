@@ -1,0 +1,59 @@
+{
+  "source": "indian_startup_funding",
+  "target": "businesses",
+  "version": 1,
+  "description": "Auto-generated crosswalk for indian_startup_funding",
+  "fieldMappings": {
+    "Startup_Name": {
+      "field": "companyName",
+      "transform": "trim"
+    },
+    "Industry": {
+      "field": "sector",
+      "transform": "normalizeSector"
+    },
+    "City": {
+      "field": "city",
+      "transform": "normalizeCity"
+    },
+    "Funding_Year": {
+      "field": "yearsOperating",
+      "transform": "toOperatingYears"
+    },
+    "Funding_Amount_USD": {
+      "field": "fundingAsk",
+      "transform": "usdToInr"
+    }
+  },
+  "validators": {
+    "companyName": {
+      "required": true,
+      "minLength": 2,
+      "maxLength": 255
+    },
+    "sector": {
+      "required": false,
+      "maxLength": 100
+    },
+    "city": {
+      "required": false,
+      "maxLength": 100
+    },
+    "yearsOperating": {
+      "required": false,
+      "type": "integer",
+      "min": 0
+    },
+    "fundingAsk": {
+      "required": false,
+      "type": "number",
+      "min": 0
+    }
+  },
+  "defaults": {
+    "verificationTier": "unverified",
+    "isProfileComplete": false,
+    "isExternal": true
+  },
+  "dedupeKey": "companyName"
+}
