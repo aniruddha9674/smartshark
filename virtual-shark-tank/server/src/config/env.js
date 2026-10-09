@@ -25,4 +25,5 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   accessTokenTtl: "15m",
   refreshTokenTtlDays: 30,
+  redisUrl: process.env.REDIS_URL || null,
 };

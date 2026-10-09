@@ -7,6 +7,7 @@ import {
   readinessScores,
 } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
+import { cacheGet, cacheSet, cacheDel } from "../config/redis.js";
 
 const MODEL_VERSION = "rules-v1";
 
@@ -228,11 +229,32 @@ export const recomputeForInvestor = async (userId) => {
 };
 
 // ─── Feed queries ──────────────────────────────────────────────
-export const getInvestorFeed = async (userId, { minScore = 0, limit = 20, offset = 0 } = {}) => {
+export const getInvestorFeed = async (
+  userId,
+  { minScore = 0, limit = 20, offset = 0 } = {}
+) => {
+  const cacheKey = `feed:${userId}:${minScore}:${limit}:${offset}`;
+
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const rows = await db
     .select({
       match: matches,
-      business: businesses,
+      business: {
+        id: businesses.id,
+        companyName: businesses.companyName,
+        sector: businesses.sector,
+        city: businesses.city,
+        description: businesses.description,
+        fundingAsk: businesses.fundingAsk,
+        yearsOperating: businesses.yearsOperating,
+        verificationTier: businesses.verificationTier,
+        logoUrl: businesses.logoUrl,
+        coverImageUrl: businesses.coverImageUrl,
+        isExternal: businesses.isExternal,
+        websiteUrl: businesses.websiteUrl,
+      },
     })
     .from(matches)
     .innerJoin(businesses, eq(businesses.id, matches.businessId))
@@ -251,11 +273,15 @@ export const getInvestorFeed = async (userId, { minScore = 0, limit = 20, offset
     rows.map((r) => r.match.businessId)
   );
 
-  return rows.map((r) => ({
+  const feed = rows.map((r) => ({
     ...r.match,
     business: r.business,
     readinessScore: readinessMap.get(r.match.businessId) ?? null,
   }));
+
+  await cacheSet(cacheKey, feed, 300);
+
+  return feed;
 };
 
 export const getBusinessFeed = async (businessId, userId, { minScore = 0, limit = 20, offset = 0 } = {}) => {
@@ -315,20 +341,28 @@ export const getMatch = async (matchId, userId) => {
 // ─── Actions ───────────────────────────────────────────────────
 export const shortlistMatch = async (matchId, userId) => {
   await getMatchForUser(matchId, userId);
+
   const [updated] = await db
     .update(matches)
     .set({ status: "shortlisted", updatedAt: new Date() })
     .where(eq(matches.id, matchId))
     .returning();
+
+  await cacheDel(`feed:${userId}:*`);
+
   return updated;
 };
 
 export const passMatch = async (matchId, userId) => {
   await getMatchForUser(matchId, userId);
+
   const [updated] = await db
     .update(matches)
     .set({ status: "passed", updatedAt: new Date() })
     .where(eq(matches.id, matchId))
     .returning();
+
+  await cacheDel(`feed:${userId}:*`);
+
   return updated;
 };

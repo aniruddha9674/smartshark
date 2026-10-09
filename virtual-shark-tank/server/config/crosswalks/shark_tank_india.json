@@ -1,0 +1,30 @@
+{
+  "source": "shark_tank_india",
+  "target": "businesses",
+  "version": 1,
+  "description": "Maps Shark Tank India dataset columns to the canonical businesses model.",
+  "fieldMappings": {
+    "Startup Name": { "field": "companyName", "transform": "trim" },
+    "Industry": { "field": "sector", "transform": "normalizeSector" },
+    "Pitchers City": { "field": "city", "transform": "normalizeCity" },
+    "Business Description": { "field": "description", "transform": "trim" },
+   "Original Ask Amount": { "field": "fundingAsk", "transform": "lakhsToINR" },
+    "Started in": { "field": "yearsOperating", "transform": "toOperatingYears" },
+    "Company Website": { "field": "websiteUrl", "transform": "trim" }
+  },
+  "validators": {
+    "companyName": { "required": true, "minLength": 2, "maxLength": 255 },
+    "sector": { "required": false, "maxLength": 100 },
+    "city": { "required": false, "maxLength": 100 },
+    "description": { "required": false, "maxLength": 5000 },
+    "fundingAsk": { "required": false, "type": "number", "min": 0 },
+    "yearsOperating": { "required": false, "type": "integer", "min": 0, "max": 100 },
+    "websiteUrl": { "required": false, "maxLength": 500 }
+  },
+  "defaults": {
+    "verificationTier": "unverified",
+    "isProfileComplete": false,
+    "isExternal": true
+  },
+  "dedupeKey": "companyName"
+}

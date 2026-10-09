@@ -18,6 +18,7 @@ import readinessRoutes from "./routes/readiness.routes.js";
 import matchRoutes from "./routes/match.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { requestLogger, attachRequestId } from "./middleware/requestId.middleware.js";
+import "./config/redis.js";
 
 const app = express();
 

@@ -30,3 +30,8 @@ export * from "./event.model.js";
 export * from "./feedImpression.model.js";
 
 export * from "./rejectedEvent.model.js";
+
+export * from "./importBatch.model.js";
+export * from "./rawImportBusiness.model.js";
+
+export * from "./harmonizationError.model.js";

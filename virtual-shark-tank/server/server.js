@@ -9,6 +9,7 @@ import { scheduleNotificationCleanup } from "./src/jobs/notificationCleanup.job.
 import cloudinary from "./src/config/cloudinary.js";
 import { logger } from "./src/config/logger.js";
 import mongoose from "mongoose";
+import { redis } from "./src/config/redis.js";
 
 const start = async () => {
   await testConnection();
@@ -29,16 +30,17 @@ const start = async () => {
     logger.info({ signal }, "Shutdown signal received — draining connections");
 
     server.close(async () => {
-  try {
-    if (pool) await pool.end();
-    await mongoose.disconnect();
-    logger.info("Clean shutdown complete");
-    process.exit(0);
-  } catch (err) {
-    logger.error({ err }, "Error during shutdown");
-    process.exit(1);
-  }
-});
+      try {
+        if (pool) await pool.end();
+        if (redis) await redis.quit();
+        await mongoose.disconnect();
+        logger.info("Clean shutdown complete");
+        process.exit(0);
+      } catch (err) {
+        logger.error({ err }, "Error during shutdown");
+        process.exit(1);
+      }
+    });
 
     // Force-exit if graceful shutdown hangs past 30s
     setTimeout(() => {
