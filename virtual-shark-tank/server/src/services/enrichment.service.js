@@ -5,7 +5,7 @@ import { env } from "../config/env.js";
 import { withRetry, isTransientError } from "../utils/retry.js";
 import { ApiError } from "../utils/apiError.js";
 
-const BRANDFETCH_CLIENT_ID = env.brandfetchClientId;
+
 
 const SECTOR_KEYWORDS = {
   foodtech: "food",
@@ -45,7 +45,8 @@ const extractDomain = (url) => {
 
 const buildLogoUrl = (domain) => {
   if (!domain) return null;
-  return `https://cdn.brandfetch.io/${domain}/w/128/h/128/theme/light/fallback/lettermark/icon?c=${BRANDFETCH_CLIENT_ID}`;
+  const clientId = process.env.BRANDFETCH_CLIENT_ID || "";
+  return `https://cdn.brandfetch.io/${domain}/w/128/h/128/theme/light/fallback/lettermark/icon?c=${clientId}`;
 };
 const fetchCoverImage = async (sector) => {
   const keyword = SECTOR_KEYWORDS[sector] || "business";

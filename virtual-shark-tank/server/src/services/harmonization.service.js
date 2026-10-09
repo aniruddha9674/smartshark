@@ -280,7 +280,10 @@ export const harmonizeBatch = async (batchId, { batchSize = 500 } = {}) => {
     .where(eq(importBatches.id, batchId))
     .returning();
 
-  return { batch: updated, stats: totals };
+  return {
+  batch: updated,
+  stats: { ...totals, remaining: 0 },
+};
 };
 
 export const listHarmonizationErrors = async (batchId, { limit = 50 } = {}) => {
