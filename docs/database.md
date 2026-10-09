@@ -1,3 +1,4 @@
+s
 # Database
 
 Complete schema reference for the SmartShark platform.
@@ -14,10 +15,12 @@ The platform uses **polyglot persistence** — two databases, each chosen for wh
 
 | Store | Data | Why |
 |---|---|---|
-| **Postgres** | 14 relational tables — users, profiles, matches, pitches, offers | Joins, transactions, ACID guarantees |
+| **Postgres** | 19 relational tables — users, businesses, pitches, offers, investments, events | Joins, transactions, ACID guarantees |
 | **MongoDB** | Verification documents (OCR output, review state) | Schema-less, shape varies per document type |
 
-Everything in Postgres references `users.id` as the root identity. MongoDB links back via a `userId` string field, enforced at the service layer.
+Everything in Postgres references `users.id` or `businesses.id` as the root identity. MongoDB links back via `userId` and `businessId` string fields, enforced at the service layer.
+
+The system uses a **multi-business model** — one user can own many businesses. This replaced an earlier 1:1 `business_profiles` design.
 
 See [§2 Data Stores](#2-data-stores) for the split rationale.
 
@@ -44,18 +47,19 @@ See [§2 Data Stores](#2-data-stores) for the split rationale.
 
 ## 3. Table Catalog
 
-All Postgres tables. Ordered by **dependency layer** — identity first, then profiles, then interactions, then domain.
+All Postgres tables. Ordered by **dependency layer** — identity first, then businesses, then interactions, then domain, then analytics, then events.
 
 ### Layer summary
 
 | Layer | Tables | Purpose |
 |---|---|---|
 | **1. Identity** | `users`, `refresh_tokens` | Who you are, how you log in |
-| **2. Profiles** | `business_profiles`, `investor_profiles` | Role-specific extensions |
+| **2. Businesses & Profiles** | `businesses`, `investor_profiles` | Role extensions (multi-business) |
 | **3. Discovery** | `follows`, `profile_views`, `matches` | How users find each other |
 | **4. Communication** | `conversations`, `messages`, `notifications` | How users talk |
-| **5. Domain** | `pitches`, `offers` | The deal flow |
-| **6. Analytics** | `readiness_scores`, `profile_edit_history` | Computed + audit data |
+| **5. Domain** | `pitches`, `offers`, `investments` | The deal flow |
+| **6. Analytics & Audit** | `readiness_scores`, `profile_edit_history` | Computed + audit data |
+| **7. Events** | `events`, `feed_impressions`, `rejected_events` | Append-only activity log |
 
 ---
 
@@ -94,6 +98,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - Single identity for both dashboards — one login endpoint, one JWT
 - Settings stored inline (not separate table) — only ~10 fields, would be over-engineering to split
 - `isProfileComplete` gates visibility on the platform
+- `role` determines the default dashboard; actual permissions are capability-based (see services)
 
 **Used by:** Every other table via FK.
 
@@ -124,16 +129,16 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 
 ---
 
-### 3.3 `business_profiles`
+### 3.3 `businesses`
 
-**Purpose:** Business-specific fields. 1:1 with a `users` row where `role = 'business'`.
+**Purpose:** A business owned by a user. **Multi-business model** — a user can own many businesses over time.
 
-**File:** `server/src/models/postgres/businessProfile.model.js`
+**File:** `server/src/models/postgres/business.model.js`
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `userId` | uuid FK unique | → `users.id`, cascade delete |
+| `ownerId` | uuid FK | → `users.id`, cascade delete — NOT unique (user can own many) |
 | `companyName` | varchar(255) | |
 | `sector` | varchar(100) | |
 | `city` | varchar(100) | |
@@ -144,13 +149,21 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | `verificationTier` | enum | `unverified` \| `basic` \| `verified` |
 | `fundingAsk` | numeric | |
 | `yearsOperating` | integer | |
+| `isProfileComplete` | boolean | default false |
+| `createdAt` | timestamp | |
+| `updatedAt` | timestamp | |
+
+**Indexes:**
+- `business_owner_idx` on `ownerId`
+- `business_sector_idx` on `sector` — feed filtering
 
 **Why the design:**
-- 1:1 with `users` — separates identity from role data
-- `verificationTier` mirrors the verification result from MongoDB
-- Verification numbers stored here even though verification flow uses Mongo — Postgres holds the "result" for fast filtering
+- 1:N with `users` — one user can own multiple businesses
+- Verification fields (`udyamNumber`, `gstNumber`, `shopActLicense`) mirror the verification result from MongoDB
+- `verificationTier` mirrors the verification tier computed across all verified documents
+- Every FK to "the business side" points to `businesses.id`, not `users.id`
 
-**Used by:** `readiness_scores`, `pitches`, matching logic.
+**Used by:** `pitches`, `offers`, `matches`, `readiness_scores`, `profile_edit_history`, `investments`, `verification` (Mongo via `businessId`).
 
 ---
 
@@ -173,7 +186,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | `isIdentityVerified` | boolean | default false |
 
 **Why the design:**
-- Mirrors business_profiles structure — same pattern, different fields
+- 1:1 with `users` — investors don't have the multi-business pattern
 - Ticket size range drives matching (business ask must fall in range)
 
 **Used by:** Matching logic, investor feed.
@@ -182,7 +195,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 
 ### 3.5 `follows`
 
-**Purpose:** One-way follow relationship (investor follows business, or vice versa).
+**Purpose:** Polymorphic follow — investor follows business, business follows investor.
 
 **File:** `server/src/models/postgres/follow.model.js`
 
@@ -201,14 +214,14 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - `no_self_follow` check: `followerId <> followingId`
 
 **Why the design:**
-- One table, both directions — role derived from `users.role`
+- One table, both directions — role derived from the joined entity
 - Reverse index on `followingId` for "who follows me" queries
 - DB-level self-follow guard — prevents app bugs
 
 **Used by:**
 - `src/services/follow.service.js` — all read/write operations
-- `src/routes/follow.routes.js` — 5 endpoints
-- Auto-follow from `match.service.js` when a match is shortlisted (Phase 5)
+- `src/routes/follow.routes.js` — 9 endpoints (polymorphic business/investor targets)
+- Auto-follow from `match.service.js` when a match is shortlisted
 - Triggers `follow` notifications via `notification.service.js`
 
 ---
@@ -275,10 +288,9 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - `lastMessageAt` denormalized for fast "sort chats by activity" — no join to `messages`
 
 **Used by:**
-- `src/services/follow.service.js` — all read/write operations
-- `src/routes/follow.routes.js` — 5 endpoints
-- Auto-follow from `match.service.js` when a match is shortlisted (Phase 5)
-- Triggers `follow` notifications via `notification.service.js`
+- `src/services/conversation.service.js` — get/create, list threads
+- `src/routes/conversation.routes.js` — 7 endpoints
+- Auto-created from `offer.service.js` on offer acceptance
 
 ---
 
@@ -310,7 +322,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 **Used by:**
 - `src/services/message.service.js` — send, list, mark-read
 - Unread badge (`GET /api/conversations/unread-count`)
-- Triggers `new_message` notifications via `notification.service.js`
+- Triggers `new_message` notifications
 - **Rate limit:** 500 messages/day per user, enforced by `rateLimit.service.js`
 
 ---
@@ -356,7 +368,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `businessId` | uuid FK | → `users.id` |
+| `businessId` | uuid FK | → `businesses.id` |
 | `score` | integer | 0–100 |
 | `modelVersion` | varchar(50) | e.g., `rules-v1`, `ml-v2` |
 | `shapBreakdown` | jsonb | `[{ feature, value, contribution }]` |
@@ -372,9 +384,9 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 **Why the design:**
 - Append-only → trend history works
 - `modelVersion` — critical for ML. When model changes, old scores marked with old version.
-- `sector` denormalized — benchmark query avoids joining `business_profiles`
+- `sector` denormalized — benchmark query avoids joining `businesses`
 
-**Used by:** Business Analysis tab. Current score also cached on `business_profiles`.
+**Used by:** Business Analysis tab. Current score also cached on `businesses`.
 
 ---
 
@@ -387,7 +399,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `businessId` | uuid FK | → `users.id` |
+| `businessId` | uuid FK | → `businesses.id` |
 | `investorId` | uuid FK | → `users.id` |
 | `matchScore` | integer | 0–100 |
 | `matchReasons` | jsonb | `[{ factor, weight, matched }]` |
@@ -425,9 +437,9 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `businessId` | uuid FK | → `users.id` |
+| `businessId` | uuid FK | → `businesses.id` |
 | `editedById` | uuid FK nullable | → `users.id`, `set null` |
-| `fieldName` | varchar(100) | e.g. `fundingAsk` |
+| `fieldName` | varchar(100) | e.g. `companyName` |
 | `oldValue` | text | nullable |
 | `newValue` | text | |
 | `fieldType` | varchar(30) | `string` \| `number` \| `currency` \| `date` |
@@ -441,8 +453,9 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - One row per field change (not one per save) — easier to display
 - `editedById` nullable for system edits (verification tier bump)
 - All values as text — audit tables shouldn't care about types
+- Writes from `applyToBusinessProfile` happen inside a Postgres transaction with the `businesses` update
 
-**Used by:** Business History tab.
+**Used by:** Business History tab, verification apply flow.
 
 ---
 
@@ -455,7 +468,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `businessId` | uuid FK | → `users.id` |
+| `businessId` | uuid FK | → `businesses.id` |
 | `title` | varchar(255) | internal round name |
 | `tagline` | varchar(300) | one-liner for cards |
 | `shortPitch` | varchar(500) | 2–3 sentences |
@@ -482,11 +495,11 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - `pitch_ask_positive` check: `askAmount > 0`
 
 **Why the design:**
-- Temporal — separate from `business_profiles` so past pitches are preserved
+- Temporal — separate from `businesses` so past pitches are preserved
 - `valuation` denormalized — computed on write, queried without math
 - Media stored as URLs only — files live in Cloudinary/S3
 
-**Used by:** `offers`, Investor feed, Business profile.
+**Used by:** `offers`, `investments`, `feed_impressions`, Investor feed.
 
 ---
 
@@ -501,7 +514,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | `id` | uuid PK | |
 | `pitchId` | uuid FK | → `pitches.id`, cascade delete |
 | `investorId` | uuid FK | → `users.id` |
-| `businessId` | uuid FK | → `users.id`, denormalized |
+| `businessId` | uuid FK | → `businesses.id`, denormalized |
 | `initiatedById` | uuid FK | → `users.id` — who created this row |
 | `parentOfferId` | uuid FK | self-ref for counters, `set null` |
 | `amount` | numeric | > 0 |
@@ -529,22 +542,169 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 - `initiatedById` handles counter-offers — either side can create a row
 - `parentOfferId` self-ref creates a negotiation thread
 - Immutable after terminal status — no `UPDATE` on accepted/rejected/withdrawn/expired
+- `expiresAt` uses **lazy expiry** — checked on read/action, not via a cron job
 
-**Used by:** Pitch detail page, business notifications, future `investments`.
+**Used by:** Pitch detail page, business notifications, `investments` creation on acceptance.
+
+---
+
+### 3.15 `investments`
+
+**Purpose:** A closed deal — created when a business accepts an offer. Append-only.
+
+**File:** `server/src/models/postgres/investment.model.js`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `pitchId` | uuid FK | → `pitches.id` |
+| `offerId` | uuid FK | → `offers.id` — the accepted offer |
+| `investorId` | uuid FK | → `users.id` |
+| `businessId` | uuid FK | → `businesses.id`, denormalized |
+| `amount` | numeric | funds committed |
+| `equityTaken` | numeric | % given up |
+| `valuation` | numeric | denormalized at close |
+| `status` | enum | `active`, `exited`, `written_off` |
+| `investedAt` | timestamp | when the offer was accepted |
+| `createdAt` | timestamp | |
+
+**Indexes:**
+- `investment_investor_idx` on `(investorId, investedAt)` — portfolio
+- `investment_business_idx` on `(businessId, investedAt)` — funding received
+- `investment_pitch_idx` on `pitchId`
+
+**Why the design:**
+- Created **inside the same transaction** as offer acceptance — either the offer is accepted and the investment exists, or neither happens
+- `offerId` is unique per investment (one offer → one investment)
+- Immutable — corrections are new rows, not updates
+
+**Used by:** Investor portfolio, business funding history, `pitch.status = 'funded'` trigger.
+
+---
+
+### 3.16 `events`
+
+**Purpose:** Append-only activity log. Cross-entity, cross-database — captures everything a user does, including interactions with Mongo entities.
+
+**File:** `server/src/models/postgres/event.model.js`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `userId` | uuid FK nullable | → `users.id`, `set null` — null for pre-login events |
+| `eventType` | varchar(50) | validated against `src/events/registry.js` |
+| `entityType` | varchar(50) | `pitch` \| `business` \| `offer` \| `verification` \| ... |
+| `entityId` | **varchar(255)** | deliberately NOT uuid — must hold Mongo ObjectIds too |
+| `metadata` | jsonb | per-event shape, documented in the registry |
+| `schemaVersion` | integer | bumped when `metadata` shape changes for a given `eventType` |
+| `createdAt` | timestamp | |
+
+**Indexes:**
+- `event_user_recent_idx` on `(userId, createdAt)`
+- `event_entity_recent_idx` on `(entityType, entityId, createdAt)`
+- `event_type_recent_idx` on `(eventType, createdAt)`
+
+**Why the design:**
+- **Append-only** — never updated. Immutability is the point.
+- **Weak entity reference** — `entityId` is `varchar(255)` because it holds UUIDs (Postgres entities) AND Mongo ObjectIds (verification documents). It is **not** a foreign key.
+- **Registry-validated** — no insert succeeds unless `eventType` is in `src/events/registry.js`. Unknown types go to `rejected_events`.
+- **Fire-and-forget** — `eventService.log()` swallows its own errors. An event write never blocks a user request.
+- **Post-transaction only** — never called inside `db.transaction()`. PGlite (single connection) deadlocks if you do.
+
+**Event types (see registry for full list):**
+- Pitch: `pitch_viewed`, `pitch_published`, `pitch_closed`, `pitch_shortlisted`, `pitch_dismissed`
+- Offer: `offer_created`, `offer_accepted`, `offer_rejected`, `offer_countered`
+- Follow: `follow_created`
+- Message: `message_sent`
+- Auth: `user_registered`
+- Verification: `verification_started`, `verification_extracted`, `verification_applied`, `verification_tier_changed`, `verification_failed`
+
+**Used by:**
+- `src/services/event.service.js` — `log()`, `logStrict()`, `listMine()`, `getRecentlyViewedPitches()`
+- `GET /api/pitches/recently-viewed`
+- Powers the paper's training data pipeline
+
+---
+
+### 3.17 `feed_impressions`
+
+**Purpose:** Append-only log of which pitches appeared where in the feed. The position-bias training signal.
+
+**File:** `src/models/postgres/feedImpression.model.js`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `userId` | uuid FK | → `users.id` |
+| `pitchId` | uuid FK | → `pitches.id` |
+| `surface` | varchar(50) | `feed` \| `search` \| `shortlist` |
+| `position` | integer | 0-indexed rank in the feed |
+| `score` | integer | model score at impression time |
+| `modelVersion` | varchar(50) | default `rules-v1` |
+| `createdAt` | timestamp | |
+
+**Indexes:**
+- `feed_impression_user_created_idx` on `(userId, createdAt)`
+- `feed_impression_pitch_idx` on `(pitchId, createdAt)`
+
+**Why the design:**
+- Separate from `events` because impressions are **high-volume** and only queried for ML training
+- `position` + `score` + `modelVersion` captures everything needed to compute position bias
+- Batch insert via `logBatch()` — not per-impression
+
+**Used by:**
+- `src/services/feedImpression.service.js`
+- Ranker training (Phase 8+)
+- Feed analytics — "what rank did click-throughs cluster at?"
+
+---
+
+### 3.18 `rejected_events`
+
+**Purpose:** Every attempt to log an unregistered event type lands here. Makes the registry self-maintaining.
+
+**File:** `src/models/postgres/rejectedEvent.model.js`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `attemptedType` | varchar(50) | unique — one row per distinct attempted type |
+| `count` | integer | default 1, incremented on repeat |
+| `sampleUserId` | uuid FK nullable | → `users.id`, `set null` |
+| `firstSeenAt` | timestamp | |
+| `lastSeenAt` | timestamp | updated on each attempt |
+
+**Indexes:**
+- `rejected_event_type_unique` (unique) on `attemptedType`
+
+**Why the design:**
+- **Discoverable gaps** — if `verification_approved` was attempted 200 times this week, it should be in the registry
+- **Distinguishes typos from missing features** — count 1 = typo; count 100+ = the system is asking for it
+- **Zero-cost to query weekly:**
+
+```sql
+SELECT attempted_type, count
+FROM rejected_events
+WHERE count > 100
+ORDER BY count DESC;
+```
+
+Every result is a candidate for a registry entry.
+
+**Used by:**
+- `eventService.log()` — best-effort `recordRejection()` on unknown type
+- Weekly registry review
 
 ---
 
 ## 4. Relationships
 
-### 4.1 Text diagram
-
-
-### 4.2 Cross-references
+### 4.1 Cross-references
 
 | From | To | Cardinality | Delete rule |
 |---|---|---|---|
 | `refresh_tokens.userId` | `users.id` | N:1 | cascade |
-| `business_profiles.userId` | `users.id` | 1:1 | cascade |
+| `businesses.ownerId` | `users.id` | **N:1** | cascade |
 | `investor_profiles.userId` | `users.id` | 1:1 | cascade |
 | `follows.followerId` | `users.id` | N:1 | cascade |
 | `follows.followingId` | `users.id` | N:1 | cascade |
@@ -556,19 +716,28 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | `messages.senderId` | `users.id` | N:1 | cascade |
 | `profile_views.viewerId` | `users.id` | N:1 | cascade |
 | `profile_views.viewedId` | `users.id` | N:1 | cascade |
-| `readiness_scores.businessId` | `users.id` | N:1 | cascade |
-| `matches.businessId` | `users.id` | N:1 | cascade |
+| `readiness_scores.businessId` | `businesses.id` | N:1 | cascade |
+| `matches.businessId` | `businesses.id` | N:1 | cascade |
 | `matches.investorId` | `users.id` | N:1 | cascade |
-| `profile_edit_history.businessId` | `users.id` | N:1 | cascade |
+| `profile_edit_history.businessId` | `businesses.id` | N:1 | cascade |
 | `profile_edit_history.editedById` | `users.id` | N:1 | set null |
-| `pitches.businessId` | `users.id` | N:1 | cascade |
+| `pitches.businessId` | `businesses.id` | N:1 | cascade |
 | `offers.pitchId` | `pitches.id` | N:1 | cascade |
 | `offers.investorId` | `users.id` | N:1 | cascade |
-| `offers.businessId` | `users.id` | N:1 | cascade |
+| `offers.businessId` | `businesses.id` | N:1 | cascade |
 | `offers.initiatedById` | `users.id` | N:1 | cascade |
 | `offers.parentOfferId` | `offers.id` | N:1 (self) | set null |
+| `investments.pitchId` | `pitches.id` | N:1 | cascade |
+| `investments.offerId` | `offers.id` | N:1 | cascade |
+| `investments.investorId` | `users.id` | N:1 | cascade |
+| `investments.businessId` | `businesses.id` | N:1 | cascade |
+| `events.userId` | `users.id` | N:1 | set null |
+| `feed_impressions.userId` | `users.id` | N:1 | cascade |
+| `feed_impressions.pitchId` | `pitches.id` | N:1 | cascade |
+| `rejected_events.sampleUserId` | `users.id` | N:1 | set null |
 
-**Rule of thumb:** cascade for owned data, set null for references to other people's data.
+**Rule of thumb:** cascade for owned data, set null for references that should survive deletion.
+**Exception:** `events.userId` and `events.entityId` — events are history. They must survive user deletion. `userId` uses `set null`. `entityId` isn't a foreign key at all.
 
 ---
 
@@ -576,7 +745,7 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 
 ### 5.1 By purpose
 
-| Purpose | Tables indexed |
+| Purpose | Indexes |
 |---|---|
 | **Auth / session** | `users.email` |
 | **Feed (investor)** | `matches.investorId + matchScore`, `pitches.status + publishedAt` |
@@ -585,12 +754,15 @@ All Postgres tables. Ordered by **dependency layer** — identity first, then pr
 | **History** | `profile_views.viewerId + lastViewedAt`, `profile_edit_history.businessId + changedAt` |
 | **Notifications** | `notifications.userId + createdAt`, `notifications.userId + isRead` |
 | **Benchmark** | `readiness_scores.sector + computedAt` |
+| **Events** | `events.userId + createdAt`, `events.entityType + entityId + createdAt`, `events.eventType + createdAt` |
+| **Impressions** | `feed_impressions.userId + createdAt`, `feed_impressions.pitchId + createdAt` |
+| **Verification (Mongo)** | `verifications.businessId + documentType`, `verifications.userId + createdAt` |
 
 ### 5.2 Why these exist
 
 - Every hot query has a covering index. No sequential scans on real workloads.
 - Composite indexes ordered by selectivity — the most-filtered column first.
-- Partial indexes (e.g., unique pending offer) come later if needed.
+- Events use `varchar(255)` for `entityId` — this is a **weak reference**, not a foreign key, so it can point to either a Postgres UUID or a Mongo ObjectId.
 
 ---
 
@@ -601,11 +773,14 @@ All Postgres enums defined via Drizzle `pgEnum`. Changing an enum requires a mig
 | Enum | Values | Used in |
 |---|---|---|
 | `role` | `business`, `investor`, `admin` | `users` |
-| `verification_tier` | `unverified`, `basic`, `verified` | `business_profiles` |
-| `notification_type` | 8 values | `notifications` |
+| `verification_tier` | `unverified`, `basic`, `verified` | `businesses` |
+| `notification_type` | `new_match`, `new_message`, `follow`, `profile_update`, `score_change`, `verification_update`, `saved_business_activity`, `system` | `notifications` |
 | `match_status` | `pending`, `viewed`, `shortlisted`, `passed`, `connected` | `matches` |
 | `pitch_status` | `draft`, `live`, `closed`, `funded`, `withdrawn` | `pitches` |
 | `offer_status` | `pending`, `accepted`, `rejected`, `countered`, `withdrawn`, `expired` | `offers` |
+| `investment_status` | `active`, `exited`, `written_off` | `investments` |
+
+**Note:** `events.eventType` is deliberately **not** an enum. New event types must not require a database migration. Validation happens in `src/events/registry.js` and rejected types go to `rejected_events`.
 
 ---
 
@@ -620,40 +795,42 @@ All Postgres enums defined via Drizzle `pgEnum`. Changing an enum requires a mig
 | Field | Type | Notes |
 |---|---|---|
 | `userId` | String | Postgres `users.id` (uuid as string) |
+| `businessId` | String | Postgres `businesses.id` (uuid as string) |
 | `documentType` | String | enum: `udyam`, `gst`, `shop_act` |
-| `documentUrl` | String | uploaded file location |
-| `ocrExtractedData` | Mixed | raw OCR output |
+| `documentUrl` | String | Cloudinary URL |
+| `publicId` | String | Cloudinary public_id (for deletion) |
+| `ocrExtractedData` | Map of `{ value, confidence }` | per-field confidence — the paper's core signal |
+| `confidenceScore` | Number | mean of field confidences |
 | `status` | String | enum: `pending`, `verified`, `needs_review`, `rejected` |
-| `confidenceScore` | Number | drives auto vs manual review |
+| `appliedFields` | [String] | which profile fields the user confirmed |
 | `reviewedAt` | Date | |
-| `createdAt` | Date | |
+| `errorMessage` | String | populated on failure |
+| `createdAt`, `updatedAt` | Date | Mongoose timestamps |
+
+**Indexes:**
+- `{ businessId: 1, documentType: 1 }` — fast lookup for cross-document consistency
+- `{ userId: 1, createdAt: -1 }` — "my verifications" list
 
 **Why Mongo:**
 - OCR output varies per document type
-- No joins needed — verification only fetched by `userId`
+- No joins needed — verification is fetched by `businessId` or `userId`
 - Schema-less means new document types don't need migrations
 
 **Sync back to Postgres:**
-When status flips to `verified`, the service updates `business_profiles.verificationTier`.
+When `applyToBusinessProfile` runs:
+1. Postgres transaction updates `businesses` + inserts into `profile_edit_history`
+2. Mongo update: `status = 'verified'`, `appliedFields = [...]`
+3. `computeVerificationTier()` reads all verifications for the business, computes tier
+4. Postgres `businesses.verificationTier` updated
+5. `verification_tier_changed` event logged
+
+**Never** write directly to `businesses` from OCR. The user must confirm first.
 
 ---
 
 ## 8. Migration Workflow
 
 Migrations live in `server/drizzle/`. Generated by `drizzle-kit`, applied by `drizzle-kit migrate`.
-
-## 9. Rate Limits (Application-Layer)
-
-Not DB constraints — enforced in `rateLimit.service.js` (in-memory).
-
-| Action | Limit | Scope |
-|---|---|---|
-| `send_message` | 500 / day | per user |
-| `new_conversation` | 50 / day | per user |
-
-**Implementation:** in-memory `Map` keyed by `userId:action:YYYY-MM-DD`. Resets daily at UTC midnight. Cleared on server restart (acceptable for MVP — a restart just gives users a fresh quota).
-
-**Migration path:** swap to Redis (`INCR` + `EXPIRE`) when running multiple server instances. Interface (`enforceLimit`, `checkLimit`) stays the same.
 
 ### Commands
 
@@ -668,3 +845,37 @@ npm run migrate      # applies pending migrations
 
 # In development, push schema directly without a migration file:
 npm run push         # faster, but not versioned
+```
+
+**Test setup:** `tests/setup.js` reads all `drizzle/*.sql` files in sorted order and applies them to a fresh PGlite instance. Every migration must be committed for tests to pass. If a test fails with "relation does not exist", a migration is missing from the repo.
+
+---
+
+## 9. Rate Limits (Application-Layer)
+
+Not DB constraints — enforced in `rateLimit.service.js` (in-memory) and `rateLimiter.js` (Gemini-specific).
+
+| Action | Limit | Scope | Enforcement |
+|---|---|---|---|
+| `send_message` | 500 / day | per user | `rateLimit.service.js` |
+| `new_conversation` | 50 / day | per user | `rateLimit.service.js` |
+| `gemini_extract` | 14 / minute | global | `rateLimiter.js` |
+
+**Implementation:** in-memory `Map` (or sliding window array for Gemini). Resets daily at UTC midnight (daily limits) or after the window (RPM limit). Cleared on server restart (acceptable for MVP).
+
+**Migration path:** swap to Redis (`INCR` + `EXPIRE`) when running multiple server instances. Interface (`enforceLimit`, `checkLimit`) stays the same.
+
+---
+
+## 10. Design Principles Applied Here
+
+1. **Stable identity, role extensions** — `users` is the root. `businesses` and `investor_profiles` extend it.
+2. **Multi-business by default** — one user, many businesses. No assumption that business ownership is 1:1.
+3. **Events vs state** — append-only for history (`events`, `messages`, `readiness_scores`, `profile_edit_history`, `feed_impressions`). Mutable rows for current state.
+4. **Weak references in event log** — `entityId` is `varchar(255)`, not FK. Events are cross-database history.
+5. **Denormalize for the hot path** — `valuation` on pitches/offers, `businessId` on offers/investments, `sector` on readiness scores.
+6. **Enforce at the lowest layer** — DB constraints (unique, check, FK), then Zod, then services.
+7. **Version everything that evolves** — `modelVersion` on scores/matches, `schemaVersion` on events, migrations for schema.
+
+---
+

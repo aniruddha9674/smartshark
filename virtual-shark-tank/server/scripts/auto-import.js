@@ -2,8 +2,7 @@ import { runJob, requireArg, intArg } from "../src/cli/runJob.js";
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "csv-parse";
-import { proposeMapping } from "../src/services/columnMatcher.service.js";
-import { inferTransform } from "../src/services/transformInferrer.service.js";
+
 import {
   buildCrosswalk,
   validateCrosswalk,
@@ -11,6 +10,7 @@ import {
 import { importCsv, getBatchStats } from "../src/services/csvImport.service.js";
 import { harmonizeBatch } from "../src/services/harmonization.service.js";
 import { createPrompt, promptChoice } from "../src/cli/prompts.js";
+import { proposeFullMapping } from "../src/services/autoMapping.service.js";
 
 const SAMPLE_SIZE = 20;
 const CROSSWALK_DIR = path.resolve("config/crosswalks");
@@ -61,39 +61,42 @@ runJob("auto-import", async ({ args, flags }) => {
 
   if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
 
-  const autoApprove = flags.has("--auto-approve");
+    const autoApprove = flags.has("--auto-approve");
   const proposeOnly = flags.has("--propose-only");
   const skipImport = flags.has("--skip-import");
+  const useLLM = !flags.has("--no-llm");
 
   console.log(`\nReading ${filePath}...`);
   const { headers, sampleValues, rowCount } = await readCsv(filePath);
-  console.log(`  ${headers.length} columns, ${rowCount} rows\n`);
+  console.log(`  ${headers.length} columns, ${rowCount} rows`);
+  console.log(`  LLM fallback: ${useLLM ? "enabled" : "disabled"}\n`);
 
-  // Stage 1: propose mapping
-  const proposal = proposeMapping(headers);
+  const proposal = await proposeFullMapping(headers, sampleValues, { useLLM });
 
-  // Stage 2: infer transforms
-  const enriched = proposal.mappings.map((m) => {
-    if (!m.field) return m;
-    const inferred = inferTransform(sampleValues[m.source] || [], m.field, m.source);
-    return { ...m, ...inferred };
-  });
-
-  // Show proposal
   console.log("Proposed mappings:");
   console.table(
-    enriched
+    proposal.mappings
       .filter((m) => m.field)
       .map((m) => ({
         source: m.source.substring(0, 28),
         field: m.field,
         transform: m.transform,
         confidence: m.confidence,
+        origin: m.source_type || "fuzzy",
       }))
   );
 
-  const unmappedCount = enriched.filter((m) => !m.field).length;
-  console.log(`  ${unmappedCount} columns not mapped\n`);
+  const unmappedCount = proposal.mappings.filter((m) => !m.field).length;
+  console.log(`  ${unmappedCount} columns not mapped`);
+
+  if (proposal.llmUsed) {
+    console.log(`  LLM: ${proposal.llmMatched}/${proposal.llmProcessed} new fields mapped`);
+  } else if (proposal.llmError) {
+    console.log(`  LLM: failed (${proposal.llmError})`);
+  }
+  console.log();
+
+  // ... rest of function unchanged (build crosswalk, review, save, import, harmonize)
 
   // Stage 3: build crosswalk
   const crosswalk = buildCrosswalk(source, enriched, {

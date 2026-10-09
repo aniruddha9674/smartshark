@@ -1,21 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { withRetry, isTransientError } from "../utils/retry.js";
+import { GoogleGenAI } from "@google/genai";
 import { checkRateLimit } from "../utils/rateLimiter.js";
+import { withRetry, isTransientError } from "../utils/retry.js";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
-  generationConfig: {
-    responseMimeType: "application/json",
-    temperature: 0.1,
-  },
-});
+const MODEL = "gemini-3.8-flash";
 
-/**
- * Field specs per document type.
- * Each entry: { name, type, description }
- */
 const DOCUMENT_SPECS = {
   udyam: {
     label: "Udyam Registration Certificate",
@@ -76,40 +66,36 @@ Rules:
 
 const fetchImageAsBase64 = async (url) => {
   const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch document: ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Failed to fetch document: ${response.status}`);
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const contentType = response.headers.get("content-type") || "image/jpeg";
   return { base64: buffer.toString("base64"), mimeType: contentType };
 };
 
-/**
- * Extract structured fields from a document.
- * @param {string} documentUrl - Cloudinary URL
- * @param {string} documentType - "udyam" | "gst" | "shop_act"
- * @returns {Promise<{ fields: Object, overallConfidence: number, raw: string }>}
- */
 export const extractFromDocument = async (documentUrl, documentType) => {
   const spec = DOCUMENT_SPECS[documentType];
-  if (!spec) {
-    throw new Error(`Unsupported document type: ${documentType}`);
-  }
+  if (!spec) throw new Error(`Unsupported document type: ${documentType}`);
 
   const { base64, mimeType } = await fetchImageAsBase64(documentUrl);
   const prompt = buildPrompt(documentType);
 
-  // Rate limit: Gemini free tier = 15 RPM. Reserve headroom → 14.
   checkRateLimit("gemini", 14, 60_000);
 
   const text = await withRetry(
     async () => {
-      const result = await model.generateContent([
-        { inlineData: { mimeType, data: base64 } },
-        prompt,
-      ]);
-      return result.response.text();
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: [
+          { inlineData: { mimeType, data: base64 } },
+          prompt,
+        ],
+        config: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
+      });
+      return response.text;
     },
     {
       attempts: 3,
@@ -127,12 +113,7 @@ export const extractFromDocument = async (documentUrl, documentType) => {
   }
 
   if (parsed.error === "wrong_document") {
-    return {
-      fields: {},
-      overallConfidence: 0,
-      raw: text,
-      wrongDocument: true,
-    };
+    return { fields: {}, overallConfidence: 0, raw: text, wrongDocument: true };
   }
 
   const values = Object.values(parsed).filter(

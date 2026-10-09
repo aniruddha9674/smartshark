@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -39,3 +39,7 @@ jobs:
           MONGO_URI: mongodb://localhost:27017/ci
           JWT_SECRET: ci-secret-not-used-anywhere-real
           JWT_REFRESH_SECRET: ci-refresh-secret-not-used-anywhere-real
+          CLOUDINARY_CLOUD_NAME: ci-dummy
+          CLOUDINARY_API_KEY: "000000000000000"
+          CLOUDINARY_API_SECRET: ci-dummy-secret-not-used-00000000
+          

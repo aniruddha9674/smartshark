@@ -1,8 +1,7 @@
 import { runJob, requireArg } from "../src/cli/runJob.js";
 import fs from "node:fs";
 import { parse } from "csv-parse";
-import { proposeMapping } from "../src/services/columnMatcher.service.js";
-import { inferTransform } from "../src/services/transformInferrer.service.js";
+import { proposeFullMapping } from "../src/services/autoMapping.service.js";
 
 const SAMPLE_SIZE = 20;
 
@@ -10,19 +9,19 @@ runJob("propose-crosswalk", async ({ args, flags }) => {
   const filePath = requireArg(
     args[0],
     "filePath",
-    "node scripts/propose-crosswalk.js <file.csv>"
+    "node scripts/propose-crosswalk.js <file.csv> [--no-llm]"
   );
 
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`File not found: ${filePath}`);
-  }
+  if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+
+  const useLLM = !flags.has("--no-llm");
 
   const parser = fs.createReadStream(filePath).pipe(
     parse({ columns: true, skip_empty_lines: true, bom: true })
   );
 
   let headers = null;
-  const sampleValues = {}; // { columnName: [values] }
+  const sampleValues = {};
 
   for await (const record of parser) {
     if (!headers) {
@@ -30,67 +29,39 @@ runJob("propose-crosswalk", async ({ args, flags }) => {
       headers.forEach((h) => (sampleValues[h] = []));
     }
     for (const h of headers) {
-      if (sampleValues[h].length < SAMPLE_SIZE) {
-        sampleValues[h].push(record[h]);
-      }
+      if (sampleValues[h].length < SAMPLE_SIZE) sampleValues[h].push(record[h]);
     }
     if (headers.every((h) => sampleValues[h].length >= SAMPLE_SIZE)) break;
   }
 
   if (!headers) throw new Error("Could not read CSV header");
 
-  const proposal = proposeMapping(headers);
-
-  // Infer transforms for mapped fields
-  const enriched = proposal.mappings.map((m) => {
-    if (!m.field) return m;
-    const values = sampleValues[m.source] || [];
-    const inferred = inferTransform(values, m.field, m.source);
-    return { ...m, ...inferred };
-  });
+  const proposal = await proposeFullMapping(headers, sampleValues, { useLLM });
 
   console.log(`\nFile: ${filePath}`);
   console.log(`Columns: ${headers.length}`);
-  console.log(`Mapped: ${proposal.mapped}  Unmapped: ${proposal.unmapped}\n`);
+  console.log(`Mapped: ${proposal.mapped}  Unmapped: ${proposal.unmapped}`);
+  if (proposal.llmUsed) {
+    console.log(`LLM: ${proposal.llmMatched}/${proposal.llmProcessed} new fields mapped`);
+  }
+  console.log();
 
   console.table(
-    enriched
+    proposal.mappings
       .filter((m) => m.field)
       .map((m) => ({
         source: m.source.substring(0, 28),
         field: m.field,
         transform: m.transform,
         confidence: m.confidence,
+        origin: m.source_type,
       }))
-  );
-
-  console.log("\nSample values for mapped columns:");
-  for (const m of enriched.filter((x) => x.field)) {
-    const values = sampleValues[m.source] || [];
-    const preview = values
-      .slice(0, 3)
-      .map((v) => JSON.stringify(v))
-      .join(", ");
-    console.log(`  ${m.source.padEnd(28)} [${m.transform.padEnd(20)}] ${preview}`);
-  }
-
-  // Count summary
-  const transformCounts = enriched
-    .filter((m) => m.field)
-    .reduce((acc, m) => {
-      acc[m.transform] = (acc[m.transform] || 0) + 1;
-      return acc;
-    }, {});
-
-  console.log("\nTransform distribution:");
-  Object.entries(transformCounts).forEach(([t, c]) =>
-    console.log(`  ${t}: ${c}`)
   );
 
   return {
     file: filePath,
     mapped: proposal.mapped,
     unmapped: proposal.unmapped,
-    transforms: transformCounts,
+    llmMatched: proposal.llmMatched,
   };
 });
