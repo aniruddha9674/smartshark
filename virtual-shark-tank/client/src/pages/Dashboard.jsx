@@ -1,6 +1,10 @@
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 import { useAuth } from "../stores/auth";
 import Feed from "./investor/Feed";
+import BusinessDetail from "./investor/BusinessDetail";
+import Shortlist from "./investor/Shortlist";
+import MyOffers from "./investor/MyOffers";
+import Portfolio from "./investor/Portfolio";
 
 export default function Dashboard() {
   const user = useAuth((s) => s.user);
@@ -79,10 +83,36 @@ export default function Dashboard() {
         <div className="flex-1 p-8 overflow-auto">
           <Routes>
             <Route path="/" element={<DashboardHome user={user} caps={caps} />} />
+
             <Route
               path="/feed"
               element={isInvestor ? <Feed /> : <Navigate to="/dashboard" replace />}
             />
+            <Route
+              path="/business/:matchId"
+              element={
+                isInvestor ? <BusinessDetail /> : <Navigate to="/dashboard" replace />
+              }
+            />
+            <Route
+              path="/shortlist"
+              element={
+                isInvestor ? <Shortlist /> : <Navigate to="/dashboard" replace />
+              }
+            />
+            <Route
+              path="/offers"
+              element={
+                isInvestor ? <MyOffers /> : <Navigate to="/dashboard" replace />
+              }
+            />
+            <Route
+              path="/portfolio"
+              element={
+                isInvestor ? <Portfolio /> : <Navigate to="/dashboard" replace />
+              }
+            />
+
             <Route
               path="*"
               element={<div className="text-zinc-500">Coming soon.</div>}

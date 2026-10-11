@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useInvestorFeed } from "../../hooks/useInvestorFeed";
 import { api, getErrorMessage } from "../../lib/api";
 
@@ -69,7 +70,7 @@ export default function Feed() {
 
 function BusinessCard({ match }) {
   const b = match.business;
-  const initials = b.companyName
+  const initials = (b.companyName || "?")
     .split(" ")
     .map((w) => w[0])
     .join("")
@@ -77,7 +78,10 @@ function BusinessCard({ match }) {
     .toUpperCase();
 
   return (
-    <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors">
+    <Link
+      to={`/dashboard/business/${match.id}`}
+      className="block p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
+    >
       <div className="flex items-start gap-4">
         {b.logoUrl ? (
           <img
@@ -130,6 +134,6 @@ function BusinessCard({ match }) {
             ))}
         </div>
       )}
-    </div>
+    </Link>
   );
 }
