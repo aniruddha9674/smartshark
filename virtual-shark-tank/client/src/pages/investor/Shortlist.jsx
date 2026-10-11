@@ -44,7 +44,7 @@ export default function Shortlist() {
           return (
             <Link
               key={match.id}
-              to={`/dashboard/business/${match.id}`}
+              to={`/dashboard/match/${match.id}`}
               className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
             >
               <div className="flex items-start gap-4">

@@ -79,9 +79,9 @@ function BusinessCard({ match }) {
 
   return (
     <Link
-      to={`/dashboard/business/${match.id}`}
-      className="block p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
-    >
+  to={`/dashboard/match/${match.id}`}
+  className="block p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
+>
       <div className="flex items-start gap-4">
         {b.logoUrl ? (
           <img

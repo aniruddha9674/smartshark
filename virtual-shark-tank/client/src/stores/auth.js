@@ -32,5 +32,9 @@ export const useAuth = create((set) => ({
     } finally {
       set({ loading: false });
     }
+    set: (state) => {
+  localStorage.setItem("user", JSON.stringify(state.user));
+  return state;
+}
   },
 }));

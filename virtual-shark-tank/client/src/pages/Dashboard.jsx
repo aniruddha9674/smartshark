@@ -1,10 +1,14 @@
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 import { useAuth } from "../stores/auth";
 import Feed from "./investor/Feed";
-import BusinessDetail from "./investor/BusinessDetail";
 import Shortlist from "./investor/Shortlist";
 import MyOffers from "./investor/MyOffers";
 import Portfolio from "./investor/Portfolio";
+import Messages from "./Messages";
+import Notifications from "./Notifications";
+import MyBusinesses from "./business/MyBusinesses";
+import BusinessDetail from "./business/BusinessDetail";
+
 
 export default function Dashboard() {
   const user = useAuth((s) => s.user);
@@ -28,6 +32,8 @@ export default function Dashboard() {
             <SidebarLink to="/dashboard/shortlist">Shortlist</SidebarLink>
             <SidebarLink to="/dashboard/offers">My Offers</SidebarLink>
             <SidebarLink to="/dashboard/portfolio">Portfolio</SidebarLink>
+            <SidebarLink to="/dashboard/messages">Messages</SidebarLink>
+<SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
           </>
         )}
 
@@ -38,6 +44,8 @@ export default function Dashboard() {
             <SidebarLink to="/dashboard/pitches">Pitches</SidebarLink>
             <SidebarLink to="/dashboard/matches">Matches</SidebarLink>
             <SidebarLink to="/dashboard/offers-received">Offers</SidebarLink>
+            <SidebarLink to="/dashboard/messages">Messages</SidebarLink>
+<SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
           </>
         )}
 
@@ -89,7 +97,7 @@ export default function Dashboard() {
               element={isInvestor ? <Feed /> : <Navigate to="/dashboard" replace />}
             />
             <Route
-              path="/business/:matchId"
+              path="/match/:matchId"
               element={
                 isInvestor ? <BusinessDetail /> : <Navigate to="/dashboard" replace />
               }
@@ -117,6 +125,16 @@ export default function Dashboard() {
               path="*"
               element={<div className="text-zinc-500">Coming soon.</div>}
             />
+            <Route path="/messages" element={<Messages />} />
+<Route path="/notifications" element={<Notifications />} />
+<Route
+  path="/businesses"
+  element={hasBusiness ? <MyBusinesses /> : <Navigate to="/dashboard" replace />}
+/>
+<Route
+  path="/businesses/:businessId"
+  element={hasBusiness ? <BusinessDetail /> : <Navigate to="/dashboard" replace />}
+/>
           </Routes>
         </div>
       </main>

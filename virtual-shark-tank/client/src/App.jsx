@@ -8,6 +8,7 @@ import ChoosePath from "./pages/onboarding/ChoosePath";
 import BusinessOnboarding from "./pages/onboarding/BusinessOnboarding";
 import InvestorOnboarding from "./pages/onboarding/InvestorOnboarding";
 
+
 export default function App() {
   const { user, loading, loadUser } = useAuth();
 
@@ -56,6 +57,7 @@ export default function App() {
         path="*"
         element={<Navigate to={user ? "/dashboard" : "/login"} replace />}
       />
+
     </Routes>
   );
 }
