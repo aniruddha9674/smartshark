@@ -1,10 +1,15 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
-import { businesses,profileEditHistory } from "../models/postgres/index.js";
+import { businesses, profileEditHistory } from "../models/postgres/index.js";
 import { Verification } from "../models/mongo/verification.model.js";
 import { extractFromDocument } from "./extraction.service.js";
+import { annotateFields } from "./formatValidator.service.js";
 import { ApiError } from "../utils/apiError.js";
 import * as eventService from "./event.service.js";
+
+// ═══════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════
 
 const assertBusinessOwnership = async (businessId, userId) => {
   const [business] = await db
@@ -19,6 +24,15 @@ const assertBusinessOwnership = async (businessId, userId) => {
   }
   return business;
 };
+
+const isBlank = (value) =>
+  value === null ||
+  value === undefined ||
+  (typeof value === "string" && value.trim() === "");
+
+// ═══════════════════════════════════════════════════════════════
+// CREATE
+// ═══════════════════════════════════════════════════════════════
 
 /**
  * Create a verification and run extraction.
@@ -67,7 +81,12 @@ export const createVerification = async ({
         metadata: { businessId, documentType, reason: "wrong_document" },
       });
     } else {
-      verification.ocrExtractedData = fields;
+      // ─── Format validation (Trust Model Phase A) ─────────
+      const { annotated, allValid, validatedCount, passedCount } =
+        annotateFields(fields);
+
+      verification.ocrExtractedData = annotated;
+      verification.formatValid = allValid;
       verification.confidenceScore = overallConfidence;
       verification.status =
         overallConfidence >= 0.7 ? "verified" : "needs_review";
@@ -82,6 +101,9 @@ export const createVerification = async ({
           documentType,
           overallConfidence,
           status: verification.status,
+          formatValidated: validatedCount,
+          formatPassed: passedCount,
+          formatAllValid: allValid,
         },
       });
     }
@@ -102,6 +124,10 @@ export const createVerification = async ({
   return verification;
 };
 
+// ═══════════════════════════════════════════════════════════════
+// READ
+// ═══════════════════════════════════════════════════════════════
+
 export const listMyVerifications = async (userId, { businessId } = {}) => {
   const query = { userId };
   if (businessId) query.businessId = businessId;
@@ -120,6 +146,7 @@ export const getVerification = async (id, userId) => {
 // ═══════════════════════════════════════════════════════════════
 // FIELD MAPPING — OCR field → profile column, per document type
 // ═══════════════════════════════════════════════════════════════
+
 const FIELD_MAP = {
   udyam: {
     enterprise_name: "companyName",
@@ -143,16 +170,22 @@ const getFieldValue = (ocrData, fieldName) => {
   return ocrData[fieldName]?.value ?? null;
 };
 
+/**
+ * Extract profile-mapped fields from a verification's OCR data.
+ * Trims strings and skips blank values.
+ */
 const extractProfileFields = (verification) => {
   const map = FIELD_MAP[verification.documentType];
   if (!map) return {};
 
   const result = {};
   for (const [ocrField, profileField] of Object.entries(map)) {
-    const value = getFieldValue(verification.ocrExtractedData, ocrField);
-    if (value !== null && value !== undefined && value !== "") {
-      result[profileField] = value;
-    }
+    const rawValue = getFieldValue(verification.ocrExtractedData, ocrField);
+
+    if (isBlank(rawValue)) continue;
+
+    result[profileField] =
+      typeof rawValue === "string" ? rawValue.trim() : rawValue;
   }
   return result;
 };
@@ -160,6 +193,7 @@ const extractProfileFields = (verification) => {
 // ═══════════════════════════════════════════════════════════════
 // CROSS-DOCUMENT CONSISTENCY + TIER
 // ═══════════════════════════════════════════════════════════════
+
 /**
  * unverified → no verified docs
  * basic     → 1+ verified primary doc
@@ -190,7 +224,7 @@ const computeVerificationTier = async (businessId, includeVerificationId) => {
       return null;
     })
     .filter(Boolean)
-    .map((n) => String(n).toLowerCase().trim());
+    .map((n) => String(n).trim().toLowerCase());
 
   const uniqueNames = new Set(names);
 
@@ -202,6 +236,7 @@ const computeVerificationTier = async (businessId, includeVerificationId) => {
 // ═══════════════════════════════════════════════════════════════
 // APPLY TO PROFILE
 // ═══════════════════════════════════════════════════════════════
+
 export const applyToBusinessProfile = async (
   verificationId,
   userId,
@@ -231,24 +266,29 @@ export const applyToBusinessProfile = async (
   const historyEntries = [];
 
   for (const [field, newValue] of Object.entries(candidates)) {
-    if (newValue === null || newValue === undefined || newValue === "") continue;
+    if (isBlank(newValue)) continue;
 
     const currentValue = business[field];
-    const isEmpty =
-      currentValue === null || currentValue === undefined || currentValue === "";
 
-    if (isEmpty) {
-      updates[field] = newValue;
+    if (isBlank(currentValue)) {
+      // Fill empty field
+      updates[field] = typeof newValue === "string" ? newValue.trim() : newValue;
       historyEntries.push({
         businessId: business.id,
         editedById: userId,
         fieldName: field,
         oldValue: null,
-        newValue: String(newValue),
+        newValue: String(newValue).trim(),
         fieldType: typeof newValue === "number" ? "number" : "string",
       });
-    } else if (String(currentValue) !== String(newValue)) {
-      conflicts.push({ field, currentValue, extractedValue: newValue });
+    } else {
+      // Compare trimmed strings to avoid false conflicts
+      const current = String(currentValue).trim();
+      const incoming = String(newValue).trim();
+
+      if (current !== incoming) {
+        conflicts.push({ field, currentValue, extractedValue: newValue });
+      }
     }
   }
 
@@ -273,7 +313,7 @@ export const applyToBusinessProfile = async (
   verification.reviewedAt = new Date();
   await verification.save();
 
-    // After verification.save() and after the tier update:
+  // Event: applied
   await eventService.log({
     userId,
     eventType: "verification_applied",
@@ -286,8 +326,7 @@ export const applyToBusinessProfile = async (
       conflictCount: conflicts.length,
     },
   });
-  
-  
+
   // Compute new tier (reads all verifications for this business)
   const newTier = await computeVerificationTier(
     business.id,
@@ -320,5 +359,4 @@ export const applyToBusinessProfile = async (
     appliedFields: Object.keys(updates),
     conflicts,
   };
-
 };

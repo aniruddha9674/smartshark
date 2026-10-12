@@ -500,11 +500,7 @@ export const getMyOffers = async (investorId, { limit = 20, offset = 0 } = {}) =
   const rows = await db
     .select({
       offer: offers,
-      pitch: {
-        id: pitches.id,
-        title: pitches.title,
-        stage: pitches.stage,
-      },
+      pitch: { id: pitches.id, title: pitches.title, stage: pitches.stage },
       business: {
         id: businesses.id,
         companyName: businesses.companyName,
@@ -519,62 +515,39 @@ export const getMyOffers = async (investorId, { limit = 20, offset = 0 } = {}) =
     .limit(limit)
     .offset(offset);
 
-  const [totalRow] = await db
-    .select({ count: sql`count(*)`.mapWith(Number) })
-    .from(offers)
-    .where(eq(offers.investorId, investorId));
-
-  return {
-    offers: rows,
-    pagination: { limit, offset, total: totalRow.count },
-  };
+  return rows.map((r) => ({
+    ...r.offer,
+    pitch: r.pitch,
+    business: r.business,
+  }));
 };
 
-export const getReceivedOffers = async (businessId, userId, { status, limit = 20, offset = 0 } = {}) => {
-  const business = await db.query.businesses.findFirst({
-    where: eq(businesses.id, businessId),
-    columns: { ownerId: true },
-  });
-  if (!business) throw ApiError.notFound("Business not found");
-  if (business.ownerId !== userId) {
-    throw ApiError.forbidden("You do not own this business");
-  }
-
-  const conditions = [eq(offers.businessId, businessId)];
-  if (status) conditions.push(eq(offers.status, status));
+export const getReceivedOffers =async (businessId, userId, { limit = 20, offset = 0 } = {}) => {
+  await assertBusinessOwnership(businessId, userId);
 
   const rows = await db
     .select({
       offer: offers,
+      pitch: { id: pitches.id, title: pitches.title, stage: pitches.stage },
       investor: {
         id: users.id,
         name: users.name,
-        avatarUrl: users.avatarUrl,
-      },
-      pitch: {
-        id: pitches.id,
-        title: pitches.title,
-        askAmount: pitches.askAmount,
-        equityOffered: pitches.equityOffered,
+        email: users.email,
       },
     })
     .from(offers)
-    .innerJoin(users, eq(users.id, offers.investorId))
     .innerJoin(pitches, eq(pitches.id, offers.pitchId))
-    .where(and(...conditions))
+    .innerJoin(users, eq(users.id, offers.investorId))
+    .where(eq(offers.businessId, businessId))
     .orderBy(desc(offers.createdAt))
     .limit(limit)
     .offset(offset);
 
-  const [totalRow] = await db
-    .select({ count: sql`count(*)`.mapWith(Number) })
-    .from(offers)
-    .where(and(...conditions));
-
-  return {
-    offers: rows,
-    pagination: { limit, offset, total: totalRow.count },
-  };
+  return rows.map((r) => ({
+    ...r.offer,
+    pitch: r.pitch,
+    investor: r.investor,
+  }));
 };
 
 export const getOfferThread = async (anyOfferId, userId) => {

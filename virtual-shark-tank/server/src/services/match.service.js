@@ -1,4 +1,4 @@
-import { eq, and, ne, gte, desc, inArray } from "drizzle-orm";
+import { eq, and, ne, gte, desc, inArray,sql } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
 import {
   businesses,
@@ -20,6 +20,7 @@ const parseList = (str) => {
     .map((s) => s.trim())
     .filter(Boolean);
 };
+
 
 const assertBusinessOwnership = async (businessId, userId) => {
   const [business] = await db
@@ -183,12 +184,39 @@ export const recomputeForBusiness = async (businessId, userId) => {
       i.maxTicketSize != null
   );
 
+  if (activeInvestors.length === 0) {
+    return { businessId, matchedAgainst: 0 };
+  }
+
   const readinessMap = await getLatestReadinessBatch([businessId]);
   const readinessScore = readinessMap.get(businessId) ?? null;
 
-  for (const investor of activeInvestors) {
+  const rows = activeInvestors.map((investor) => {
     const { score, reasons } = computeScore(investor, business, readinessScore);
-    await upsertMatch(businessId, investor.userId, score, reasons);
+    return {
+      businessId,
+      investorId: investor.userId,
+      matchScore: score,
+      matchReasons: reasons,
+      modelVersion: MODEL_VERSION,
+    };
+  });
+
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    await db
+      .insert(matches)
+      .values(chunk)
+      .onConflictDoUpdate({
+        target: [matches.businessId, matches.investorId],
+        set: {
+          matchScore: sql`excluded.match_score`,
+          matchReasons: sql`excluded.match_reasons`,
+          modelVersion: sql`excluded.model_version`,
+          updatedAt: new Date(),
+        },
+      });
   }
 
   return {
@@ -213,13 +241,40 @@ export const recomputeForInvestor = async (userId) => {
     .from(businesses)
     .where(eq(businesses.isProfileComplete, true));
 
+  if (bizList.length === 0) {
+    return { investorId: userId, matchedAgainst: 0 };
+  }
+
   const businessIds = bizList.map((b) => b.id);
   const readinessMap = await getLatestReadinessBatch(businessIds);
 
-  for (const business of bizList) {
+  const rows = bizList.map((business) => {
     const readinessScore = readinessMap.get(business.id) ?? null;
     const { score, reasons } = computeScore(investor, business, readinessScore);
-    await upsertMatch(business.id, userId, score, reasons);
+    return {
+      businessId: business.id,
+      investorId: userId,
+      matchScore: score,
+      matchReasons: reasons,
+      modelVersion: MODEL_VERSION,
+    };
+  });
+
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    await db
+      .insert(matches)
+      .values(chunk)
+      .onConflictDoUpdate({
+        target: [matches.businessId, matches.investorId],
+        set: {
+          matchScore: sql`excluded.match_score`,
+          matchReasons: sql`excluded.match_reasons`,
+          modelVersion: sql`excluded.model_version`,
+          updatedAt: new Date(),
+        },
+      });
   }
 
   return {
@@ -335,7 +390,34 @@ const getMatchForUser = async (matchId, userId) => {
 };
 
 export const getMatch = async (matchId, userId) => {
-  return getMatchForUser(matchId, userId);
+  const m = await getMatchForUser(matchId, userId);
+
+  const [business] = await db
+    .select({
+      id: businesses.id,
+      companyName: businesses.companyName,
+      sector: businesses.sector,
+      city: businesses.city,
+      description: businesses.description,
+      fundingAsk: businesses.fundingAsk,
+      yearsOperating: businesses.yearsOperating,
+      verificationTier: businesses.verificationTier,
+      logoUrl: businesses.logoUrl,
+      coverImageUrl: businesses.coverImageUrl,
+      isExternal: businesses.isExternal,
+      websiteUrl: businesses.websiteUrl,
+    })
+    .from(businesses)
+    .where(eq(businesses.id, m.businessId))
+    .limit(1);
+
+  const readinessMap = await getLatestReadinessBatch([m.businessId]);
+
+  return {
+    ...m,
+    business,
+    readinessScore: readinessMap.get(m.businessId) ?? null,
+  };
 };
 
 // ─── Actions ───────────────────────────────────────────────────

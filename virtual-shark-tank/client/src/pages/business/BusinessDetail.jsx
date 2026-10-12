@@ -7,6 +7,8 @@ import {
   useApplyVerification,
 } from "../../hooks/useVerifications";
 import { api, getErrorMessage } from "../../lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import VerificationStatus from "../../components/VerificationStatus";
 
 const inputClass =
   "px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand w-full text-sm";
@@ -214,19 +216,22 @@ function Field({ label, children }) {
 }
 
 function DocumentsTab({ business }) {
+  const queryClient = useQueryClient();
   const { data: verifications, isLoading } = useVerifications(business.id);
   const create = useCreateVerification(business.id);
-  const apply = useApplyVerification(business.id);
 
   const [documentType, setDocumentType] = useState("udyam");
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  const [applying, setApplying] = useState(null);
 
   const upload = async (e) => {
     e.preventDefault();
     if (!file) return;
     setError("");
+    setSuccessMsg("");
     setUploading(true);
     try {
       const form = new FormData();
@@ -236,7 +241,7 @@ function DocumentsTab({ business }) {
       });
       const { url, publicId } = uploadRes.data.data;
 
-      await create.mutateAsync({
+      const result = await create.mutateAsync({
         businessId: business.id,
         documentType,
         documentUrl: url,
@@ -245,6 +250,19 @@ function DocumentsTab({ business }) {
 
       setFile(null);
       e.target.reset();
+
+      const status = result.data?.verification?.status;
+      if (status === "verified") {
+        setSuccessMsg(
+          "Document verified. Click 'Apply to profile' below to merge the extracted fields and earn your badge."
+        );
+      } else if (status === "needs_review") {
+        setSuccessMsg(
+          "Document extracted with low confidence. An admin will review it."
+        );
+      } else {
+        setSuccessMsg("Uploaded. Processing...");
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -252,17 +270,40 @@ function DocumentsTab({ business }) {
     }
   };
 
-  const applyVerification = async (verificationId) => {
+  const applyVerification = async (v) => {
+    setApplying(v._id);
+    setError("");
     try {
-      await apply.mutateAsync({ verificationId, confirmedFields: {} });
-      alert("Applied to profile");
+      const res = await api.post(`/api/verifications/${v._id}/apply`, {
+        confirmedFields: {},
+      });
+
+      const { newTier, appliedFields, conflicts } = res.data;
+
+      // Refetch everything relevant
+      queryClient.invalidateQueries({ queryKey: ["verifications", business.id] });
+      queryClient.invalidateQueries({ queryKey: ["business", business.id] });
+      queryClient.invalidateQueries({ queryKey: ["my-businesses"] });
+
+      let msg = `Applied ${appliedFields.length} field(s).`;
+      if (newTier !== business.verificationTier) {
+        msg += ` Tier upgraded to ${newTier}.`;
+      }
+      if (conflicts && conflicts.length > 0) {
+        msg += ` ${conflicts.length} field(s) had conflicting values and were not overwritten.`;
+      }
+      setSuccessMsg(msg);
     } catch (err) {
-      alert(getErrorMessage(err));
+      setError(getErrorMessage(err));
+    } finally {
+      setApplying(null);
     }
   };
 
   return (
     <div className="space-y-6">
+      <VerificationStatus business={business} verifications={verifications} />
+
       <form
         onSubmit={upload}
         className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl space-y-3"
@@ -293,11 +334,19 @@ function DocumentsTab({ business }) {
             />
           </label>
         </div>
+
         {error && (
           <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
             {error}
           </div>
         )}
+
+        {successMsg && (
+          <div className="px-3 py-2 text-sm bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg">
+            {successMsg}
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={!file || uploading}
@@ -346,16 +395,16 @@ function DocumentsTab({ business }) {
 
                 {v.status === "verified" && (
                   <button
-                    onClick={() => applyVerification(v._id)}
-                    disabled={apply.isPending}
-                    className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg"
+                    onClick={() => applyVerification(v)}
+                    disabled={applying === v._id}
+                    className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg disabled:opacity-50 whitespace-nowrap"
                   >
-                    Apply to profile
+                    {applying === v._id ? "Applying..." : "Apply to profile"}
                   </button>
                 )}
               </div>
 
-              {v.ocrExtractedData && (
+              {v.ocrExtractedData && Object.keys(v.ocrExtractedData).length > 0 && (
                 <details className="mt-3">
                   <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300">
                     View extracted fields

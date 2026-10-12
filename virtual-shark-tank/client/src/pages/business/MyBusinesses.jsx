@@ -8,6 +8,12 @@ const tierColors = {
   verified: "bg-emerald-500/10 text-emerald-400",
 };
 
+const tierSymbol = {
+  unverified: "○",
+  basic: "◐",
+  verified: "✓",
+};
+
 export default function MyBusinesses() {
   const { data: businesses, isLoading, error } = useMyBusinesses();
 
@@ -55,6 +61,8 @@ export default function MyBusinesses() {
             .slice(0, 2)
             .toUpperCase();
 
+          const tier = b.verificationTier || "unverified";
+
           return (
             <Link
               key={b.id}
@@ -81,11 +89,12 @@ export default function MyBusinesses() {
                     {b.sector || "—"} {b.city ? `· ${b.city}` : ""}
                   </p>
                   <span
-                    className={`inline-block text-xs px-2 py-0.5 rounded mt-3 ${
-                      tierColors[b.verificationTier] || tierColors.unverified
+                    className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded mt-3 font-medium ${
+                      tierColors[tier] || tierColors.unverified
                     }`}
                   >
-                    {b.verificationTier}
+                    <span>{tierSymbol[tier]}</span>
+                    {tier}
                   </span>
                 </div>
               </div>
