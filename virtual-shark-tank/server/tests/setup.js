@@ -14,6 +14,7 @@ process.env.CLOUDINARY_API_SECRET ||= "ci-dummy-secret";
 // POSTGRES — in-memory via PGlite
 // ═══════════════════════════════════════════════════════════════
 const pgClient = new PGlite();
+await pgClient.exec("CREATE EXTENSION IF NOT EXISTS pg_trgm");
 
 const drizzleDir = path.resolve("drizzle");
 const files = fs
