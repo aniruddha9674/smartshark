@@ -28,6 +28,24 @@ const computeValuation = (amount, equity) => {
   return (a / (e / 100)).toFixed(2);
 };
 
+// ═══════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+const assertBusinessOwnership = async (businessId, userId) => {
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+
+  if (!business) throw ApiError.notFound("Business not found");
+  if (business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this business");
+  }
+  return business;
+};
+
 const computeExpiry = (days) => {
   const d = days ?? OFFER_DEFAULT_EXPIRY_DAYS;
   return new Date(Date.now() + d * 24 * 60 * 60 * 1000);

@@ -8,7 +8,8 @@ import Messages from "./Messages";
 import Notifications from "./Notifications";
 import MyBusinesses from "./business/MyBusinesses";
 import BusinessDetail from "./business/BusinessDetail";
-
+import Matches from "./business/Matches";
+import OffersReceived from "./business/OffersReceived";
 
 export default function Dashboard() {
   const user = useAuth((s) => s.user);
@@ -134,6 +135,14 @@ export default function Dashboard() {
 <Route
   path="/businesses/:businessId"
   element={hasBusiness ? <BusinessDetail /> : <Navigate to="/dashboard" replace />}
+/>
+<Route
+  path="/matches"
+  element={hasBusiness ? <Matches /> : <Navigate to="/dashboard" replace />}
+/>
+<Route
+  path="/offers-received"
+  element={hasBusiness ? <OffersReceived /> : <Navigate to="/dashboard" replace />}
 />
           </Routes>
         </div>
