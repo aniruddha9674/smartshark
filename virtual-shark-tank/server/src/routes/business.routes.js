@@ -83,6 +83,8 @@ router.post(
   asyncHandler(businessController.create)
 );
 
+router.get("/:id/public", asyncHandler(businessController.getPublic));
+
 /**
  * @openapi
  * /api/businesses/{id}:

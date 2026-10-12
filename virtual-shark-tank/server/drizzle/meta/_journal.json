@@ -64,6 +64,13 @@
       "when": 1791549526023,
       "tag": "0008_serious_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791835594430,
+      "tag": "0009_moaning_the_stranger",
+      "breakpoints": true
     }
   ]
 }

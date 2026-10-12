@@ -141,3 +141,21 @@ export const getBusinessHistory = async (businessId, userId, limit = 50) => {
     limit,
   });
 };
+
+/**
+ * Public read — no ownership check.
+ * Returns the same shape as getOne, minus owner-sensitive fields.
+ */
+export const getPublicBusiness = async (id) => {
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, id))
+    .limit(1);
+
+  if (!business) throw ApiError.notFound("Business not found");
+
+  // Strip fields an investor shouldn't see
+  const { ownerId, ...safe } = business;
+  return safe;
+};

@@ -45,3 +45,8 @@ export const getHistory = async (req, res) => {
   );
   res.json({ history });
 };
+
+export const getPublic = async (req, res) => {
+  const business = await businessService.getPublicBusiness(req.params.id);
+  res.json({ business });
+};

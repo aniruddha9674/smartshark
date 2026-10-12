@@ -1,24 +1,43 @@
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useMatch } from "../../hooks/useMatch";
+import { useBusinessPublic } from "../../hooks/useBusinessPublic";
 import { useBusinessPitches } from "../../hooks/useBusinessPitches";
 import { api, getErrorMessage } from "../../lib/api";
 import MakeOfferModal from "../../components/MakeOfferModal";
 
 export default function BusinessDetail() {
-  const { matchId } = useParams();
+  const { matchId, businessId: businessIdParam } = useParams();
   const navigate = useNavigate();
   const [offerPitch, setOfferPitch] = useState(null);
   const [actionError, setActionError] = useState("");
 
-  const { data: match, isLoading, error, refetch } = useMatch(matchId);
-  const businessId = match?.businessId;
-  const { data: pitches, isLoading: pitchesLoading } = useBusinessPitches(businessId);
+  // ─── Match mode (has matchId) ─────────────────────────
+  const matchQuery = useMatch(matchId);
 
+  // ─── Browse mode (has businessId, no matchId) ─────────
+  const publicQuery = useBusinessPublic(
+    !matchId ? businessIdParam : undefined
+  );
+
+  const match = matchQuery.data;
+  const publicBiz = publicQuery.data;
+
+  const isLoading = matchId ? matchQuery.isLoading : publicQuery.isLoading;
+  const error = matchId ? matchQuery.error : publicQuery.error;
+
+  // Resolve which business object we're rendering
+  const b = match?.business || publicBiz;
+  const businessId = b?.id;
+
+  const { data: pitches, isLoading: pitchesLoading } =
+    useBusinessPitches(businessId);
+
+  // ─── Actions ──────────────────────────────────────────
   const shortlist = async () => {
     try {
       await api.post(`/api/matches/${matchId}/shortlist`);
-      refetch();
+      matchQuery.refetch();
     } catch (err) {
       setActionError(getErrorMessage(err));
     }
@@ -34,6 +53,7 @@ export default function BusinessDetail() {
   };
 
   if (isLoading) return <div className="text-zinc-500">Loading...</div>;
+
   if (error) {
     return (
       <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
@@ -41,9 +61,9 @@ export default function BusinessDetail() {
       </div>
     );
   }
-  if (!match) return <div className="text-zinc-500">Not found</div>;
 
-  const b = match.business;
+  if (!b) return <div className="text-zinc-500">Not found</div>;
+
   const initials = (b.companyName || "?")
     .split(" ")
     .map((w) => w[0])
@@ -51,10 +71,13 @@ export default function BusinessDetail() {
     .slice(0, 2)
     .toUpperCase();
 
+  const hasMatch = !!match;
+  const backTo = hasMatch ? "/dashboard/feed" : "/dashboard/feed";
+
   return (
     <div className="max-w-3xl">
       <Link
-        to="/dashboard/feed"
+        to={backTo}
         className="text-sm text-zinc-500 hover:text-zinc-300 mb-4 inline-block"
       >
         ← Back to feed
@@ -85,9 +108,13 @@ export default function BusinessDetail() {
             {b.sector || "—"} {b.city ? `· ${b.city}` : ""}
           </p>
           <div className="flex items-center gap-4 mt-3 text-sm">
-            <span className="text-brand font-medium">
-              {match.matchScore}% match
-            </span>
+            {hasMatch ? (
+              <span className="text-brand font-medium">
+                {match.matchScore}% match
+              </span>
+            ) : (
+              <span className="text-zinc-500">Not yet matched</span>
+            )}
             {b.verificationTier && b.verificationTier !== "unverified" && (
               <span className="text-emerald-400">{b.verificationTier}</span>
             )}
@@ -101,21 +128,23 @@ export default function BusinessDetail() {
         </div>
       )}
 
-      <div className="flex gap-2 mb-8">
-        <button
-          onClick={shortlist}
-          disabled={match.status === "shortlisted"}
-          className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
-        >
-          {match.status === "shortlisted" ? "Shortlisted" : "Shortlist"}
-        </button>
-        <button
-          onClick={pass}
-          className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg"
-        >
-          Pass
-        </button>
-      </div>
+      {hasMatch && (
+        <div className="flex gap-2 mb-8">
+          <button
+            onClick={shortlist}
+            disabled={match.status === "shortlisted"}
+            className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
+          >
+            {match.status === "shortlisted" ? "Shortlisted" : "Shortlist"}
+          </button>
+          <button
+            onClick={pass}
+            className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg"
+          >
+            Pass
+          </button>
+        </div>
+      )}
 
       <section className="mb-8">
         <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
@@ -129,7 +158,9 @@ export default function BusinessDetail() {
             <div>
               <div className="text-zinc-500">Funding ask</div>
               <div className="text-zinc-200 mt-1">
-                {b.fundingAsk ? `₹${Number(b.fundingAsk).toLocaleString("en-IN")}` : "—"}
+                {b.fundingAsk
+                  ? `₹${Number(b.fundingAsk).toLocaleString("en-IN")}`
+                  : "—"}
               </div>
             </div>
             <div>
@@ -153,7 +184,7 @@ export default function BusinessDetail() {
         </div>
       </section>
 
-      {match.matchReasons && match.matchReasons.length > 0 && (
+      {hasMatch && match.matchReasons && match.matchReasons.length > 0 && (
         <section className="mb-8">
           <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
             Why this matched
@@ -207,7 +238,9 @@ export default function BusinessDetail() {
                       ₹{Number(pitch.askAmount).toLocaleString("en-IN")}
                     </span>
                     <span className="text-zinc-600 mx-2">·</span>
-                    <span className="text-zinc-400">{pitch.equityOffered}% equity</span>
+                    <span className="text-zinc-400">
+                      {pitch.equityOffered}% equity
+                    </span>
                   </div>
                   <button
                     onClick={() => setOfferPitch(pitch)}
@@ -229,7 +262,7 @@ export default function BusinessDetail() {
           onClose={() => setOfferPitch(null)}
           onSuccess={() => {
             alert("Offer sent");
-            refetch();
+            if (hasMatch) matchQuery.refetch();
           }}
         />
       )}

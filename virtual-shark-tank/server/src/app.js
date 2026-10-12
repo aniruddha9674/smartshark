@@ -19,6 +19,8 @@ import matchRoutes from "./routes/match.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { requestLogger, attachRequestId } from "./middleware/requestId.middleware.js";
 import notificationRoutes from "./routes/notification.routes.js";
+import searchRoutes from "./routes/search.routes.js";
+
 import "./config/redis.js";
 
 const app = express();
@@ -82,6 +84,7 @@ app.use("/api/uploads", uploadRoutes);
 app.use("/api/verifications", verificationRoutes);
 app.use("/api/matches", matchRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/search", searchRoutes);
 
 // ─── 9. JSON 404 for anything unmatched ───
 app.use((req, res) => {

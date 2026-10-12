@@ -7,7 +7,8 @@ import Portfolio from "./investor/Portfolio";
 import Messages from "./Messages";
 import Notifications from "./Notifications";
 import MyBusinesses from "./business/MyBusinesses";
-import BusinessDetail from "./business/BusinessDetail";
+import InvestorBusinessDetail from "./investor/BusinessDetail";
+import BusinessProfile from "./business/BusinessDetail";
 import Matches from "./business/Matches";
 import OffersReceived from "./business/OffersReceived";
 
@@ -34,7 +35,7 @@ export default function Dashboard() {
             <SidebarLink to="/dashboard/offers">My Offers</SidebarLink>
             <SidebarLink to="/dashboard/portfolio">Portfolio</SidebarLink>
             <SidebarLink to="/dashboard/messages">Messages</SidebarLink>
-<SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
+            <SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
           </>
         )}
 
@@ -46,7 +47,7 @@ export default function Dashboard() {
             <SidebarLink to="/dashboard/matches">Matches</SidebarLink>
             <SidebarLink to="/dashboard/offers-received">Offers</SidebarLink>
             <SidebarLink to="/dashboard/messages">Messages</SidebarLink>
-<SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
+            <SidebarLink to="/dashboard/notifications">Notifications</SidebarLink>
           </>
         )}
 
@@ -93,57 +94,53 @@ export default function Dashboard() {
           <Routes>
             <Route path="/" element={<DashboardHome user={user} caps={caps} />} />
 
+            {/* Investor-only listing routes — guarded */}
             <Route
               path="/feed"
               element={isInvestor ? <Feed /> : <Navigate to="/dashboard" replace />}
             />
             <Route
-              path="/match/:matchId"
-              element={
-                isInvestor ? <BusinessDetail /> : <Navigate to="/dashboard" replace />
-              }
-            />
-            <Route
               path="/shortlist"
-              element={
-                isInvestor ? <Shortlist /> : <Navigate to="/dashboard" replace />
-              }
+              element={isInvestor ? <Shortlist /> : <Navigate to="/dashboard" replace />}
             />
             <Route
               path="/offers"
-              element={
-                isInvestor ? <MyOffers /> : <Navigate to="/dashboard" replace />
-              }
+              element={isInvestor ? <MyOffers /> : <Navigate to="/dashboard" replace />}
             />
             <Route
               path="/portfolio"
-              element={
-                isInvestor ? <Portfolio /> : <Navigate to="/dashboard" replace />
-              }
+              element={isInvestor ? <Portfolio /> : <Navigate to="/dashboard" replace />}
             />
 
+            {/* Business-only listing routes — guarded */}
+            <Route
+              path="/businesses"
+              element={hasBusiness ? <MyBusinesses /> : <Navigate to="/dashboard" replace />}
+            />
+            <Route
+              path="/matches"
+              element={hasBusiness ? <Matches /> : <Navigate to="/dashboard" replace />}
+            />
+            <Route
+              path="/offers-received"
+              element={hasBusiness ? <OffersReceived /> : <Navigate to="/dashboard" replace />}
+            />
+
+            {/* Detail routes — NOT guarded. Ownership is enforced server-side.
+                If the user can't access the resource, the component shows an error. */}
+            <Route path="/match/:matchId" element={<InvestorBusinessDetail />} />
+            <Route path="/browse/:businessId" element={<InvestorBusinessDetail />} />
+            <Route path="/businesses/:businessId" element={<BusinessProfile />} />
+
+            {/* Shared */}
+            <Route path="/messages" element={<Messages />} />
+            <Route path="/notifications" element={<Notifications />} />
+
+            {/* Catch-all — must be last */}
             <Route
               path="*"
               element={<div className="text-zinc-500">Coming soon.</div>}
             />
-            <Route path="/messages" element={<Messages />} />
-<Route path="/notifications" element={<Notifications />} />
-<Route
-  path="/businesses"
-  element={hasBusiness ? <MyBusinesses /> : <Navigate to="/dashboard" replace />}
-/>
-<Route
-  path="/businesses/:businessId"
-  element={hasBusiness ? <BusinessDetail /> : <Navigate to="/dashboard" replace />}
-/>
-<Route
-  path="/matches"
-  element={hasBusiness ? <Matches /> : <Navigate to="/dashboard" replace />}
-/>
-<Route
-  path="/offers-received"
-  element={hasBusiness ? <OffersReceived /> : <Navigate to="/dashboard" replace />}
-/>
           </Routes>
         </div>
       </main>
