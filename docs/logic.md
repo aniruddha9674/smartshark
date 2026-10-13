@@ -1,327 +1,132 @@
 # Logic
 
-How requests flow through the backend — routes, controllers, services, middleware, and utilities.
+How a request moves through the backend.
 
-**Stack:** Node 22 + Express + Drizzle
-**Location:** `server/src/`
+Stack: Node 22, Express, Drizzle, Mongoose. Everything lives under `server/src/`.
 
-Every endpoint follows the same pattern: **route → middleware → controller → service → database**.
+Every endpoint follows the same path: route → middleware → controller → service → database. Once you understand one endpoint you understand them all.
 
-See [database.md](./database.md) for table schemas referenced throughout this doc.
+Table schemas are in [database.md](./database.md).
 
----
+## 1. The layers
 
-## 1. Code Layers
+Five folders, each with one job.
 
-Five layers, each with a single responsibility. Files are grouped by layer.
+Routes map URLs to handler functions. They also attach the middleware that runs before the handler. Nothing else belongs in a route file.
 
-| Layer | Folder | Responsibility |
-|---|---|---|
-| **Routes** | `src/routes/` | URL → handler mapping |
-| **Middleware** | `src/middleware/` | Cross-cutting concerns (auth, validation, errors, upload) |
-| **Controllers** | `src/controllers/` | HTTP layer — parse request, call service, send response |
-| **Services** | `src/services/` | Business logic, database access |
-| **Validators** | `src/validators/` | Request body + query shape (zod schemas) |
+Middleware handles cross-cutting concerns — auth, body validation, file uploads, error formatting. Each middleware is a function of `(req, res, next)` and either mutates `req` and calls `next()`, or throws / calls `next(err)`.
 
-### 1.1 Service catalog
+Controllers are the HTTP boundary. They read from `req`, call a service, and send a response. That's it. Controllers never import the database client, never query, never apply business rules.
 
-Current services and their responsibilities:
+Services hold the actual logic. They take plain arguments — never `req` or `res` — apply rules, query Postgres or Mongo, and return plain data or throw `ApiError`. Services are the only layer that imports model definitions.
 
-| Service | Purpose |
-|---|---|
-| `auth.service.js` | Register, login, refresh rotation, logout |
-| `business.service.js` | Business CRUD, multi-business ownership, audit trail |
-| `investorProfile.service.js` | Read/update investor profile |
-| `pitch.service.js` | Pitch CRUD + lifecycle (draft → live → closed), events |
-| `offer.service.js` | Offer create/counter/accept/reject/withdraw, transactions |
-| `investment.service.js` | Portfolio queries, aggregate stats |
-| `follow.service.js` | Polymorphic follow (business/investor) + follower lists |
-| `conversation.service.js` | Get/create conversations, chat list, unread counts |
-| `message.service.js` | Send/list messages, mark read, rate-limit gate |
-| `notification.service.js` | Cross-cutting — insert notifications, respecting user prefs |
-| `rateLimit.service.js` | In-memory daily rate limiter (per user, per action) |
-| `upload.service.js` | Cloudinary stream upload |
-| `extraction.service.js` | Gemini Flash document OCR + field extraction |
-| `verification.service.js` | Verification pipeline: create → extract → apply → tier |
-| `event.service.js` | Append-only event log + recently-viewed queries |
-| `feedImpression.service.js` | Batch impression log for ranker training |
+Validators are Zod schemas. One file per domain. They run as middleware and either pass validated data through or reject the request with a 400.
 
-Supporting layers:
+There's a shared rule the whole codebase follows: controllers don't touch the database, and services don't touch HTTP. That means services are testable without spinning up an Express app, controllers stay around ten lines, and when you need to debug something you know which layer it lives in.
 
-| Layer | Folder | Responsibility |
-|---|---|---|
-| **Models** | `src/models/postgres/`, `src/models/mongo/` | Drizzle tables + Mongoose schemas |
-| **Events registry** | `src/events/` | Whitelist of allowed event types + validation |
-| **Utils** | `src/utils/` | Pure helpers (hashing, tokens, errors, retry, rate limiter) |
-| **Config** | `src/config/` | DB connections, Cloudinary, env validation, Swagger |
+Supporting folders:
 
-### The one rule
+Models hold the Drizzle table definitions and Mongoose schemas.
+The events registry holds the whitelist of allowed event types.
+Utils are pure helpers — password hashing, JWT signing, error classes, retry logic, in-memory rate limiting.
+Config holds database connections, Cloudinary setup, environment validation, and the Swagger spec.
 
-> **Controllers never touch the DB directly. Services never touch `req`/`res`.**
+## 2. What happens when a request arrives
 
-This separation means:
-- Services are testable without HTTP
-- Controllers stay thin (~10 lines each)
-- Business logic has one home
-
----
-
-## 2. Request Lifecycle
-
-Every HTTP request goes through this pipeline:
+Express matches the URL against a router. The router runs its middleware chain in order — auth first, then validation, then upload handling if the route accepts a file. Then the controller runs, calls the service, and sends back JSON. If anything throws, `errorHandler` catches it and formats the response.
 
 ```
-Client request
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ 1. Express router matches path + method     │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ 2. Middleware chain (in order)              │
-│    - requireAuth        ← JWT check         │
-│    - validate(schema)   ← body validation   │
-│    - upload.single()    ← Multer (uploads)  │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ 3. Controller handler                       │
-│    - reads req.body, req.user, req.file     │
-│    - calls service function                 │
-│    - sends response                         │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ 4. Service function                         │
-│    - business rules                         │
-│    - Drizzle DB queries + Mongoose          │
-│    - returns plain data or throws ApiError  │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ 5. Response sent to client                  │
-│    or errorHandler returns { error }        │
-└─────────────────────────────────────────────┘
+client request
+  → express router matches path + method
+  → middleware chain (requireAuth, validate, upload)
+  → controller (reads req, calls service)
+  → service (rules, DB queries, throws ApiError)
+  → response or errorHandler
 ```
 
-If any layer throws, `errorHandler` catches it and returns a structured JSON error. **No controller has a try/catch.**
+No controller has a try/catch. The `asyncHandler` wrapper around every controller export catches synchronous and async throws, forwards to `next(err)`, and `errorHandler` formats the response. One path for every error.
 
-**Note:** `requireRole` was removed in the multi-business refactor. Authorization is now capability-based — services check ownership (e.g., "does this business belong to this user?") rather than role.
-
----
+Worth stating clearly: there's no `requireRole` middleware. It existed in an earlier version and was removed when the platform moved to a multi-business model. A user can own businesses and be an investor at the same time, so a role check on a route makes no sense — the check that matters is "does this business belong to this user?", and that's enforced in the service layer. More on that in the ownership section below.
 
 ## 3. Routes
 
-All routes are mounted in `src/app.js`. Each router file lives in `src/routes/`.
+Every router is mounted in `src/app.js`. All routes require a valid access token unless the route is explicitly public.
 
-### 3.1 Route registration
+Auth (`auth.routes.js`): register, login, refresh, logout, me. Five endpoints. Register and login are public. Refresh and logout read a refresh token from an httpOnly cookie and don't need the access token. `me` requires a bearer token.
 
-```js
-// src/app.js
-app.use("/api/auth", authRoutes);
-app.use("/api/businesses", businessRoutes);
-app.use("/api/investor", investorRoutes);
-app.use("/api/pitches", pitchRoutes);
-app.use("/api/offers", offerRoutes);
-app.use("/api/investments", investmentRoutes);
-app.use("/api/follows", followRoutes);
-app.use("/api/conversations", conversationRoutes);
-app.use("/api/uploads", uploadRoutes);
-app.use("/api/verifications", verificationRoutes);
-```
+Business (`business.routes.js`): list mine, create, get one, patch, complete, history. Plus the public profile at `GET /:id/public` which returns a business for any authenticated user without an ownership check — investors use this when browsing from search. And `POST /:id/complete` which validates required fields and flips `isProfileComplete`.
 
-### 3.2 All routes
+Investor (`investor.routes.js`): create my profile, get mine, patch mine, mark complete. Four endpoints.
 
-Every prefix mounts a router. All routes require a valid access token unless marked `public`.
+Pitches (`pitch.routes.js`): create, list mine, list live, get one, patch, delete, publish, close, recently-viewed. The last one is backed by the events table rather than a dedicated table — every non-owner view of a pitch logs an event, and the endpoint reads back the deduped list.
 
-**File:** `src/routes/auth.routes.js` — 5 endpoints
-| Method | Path | Middleware | Auth |
-|---|---|---|---|
-| POST | `/api/auth/register` | `validate(registerSchema)` | public |
-| POST | `/api/auth/login` | `validate(loginSchema)` | public |
-| POST | `/api/auth/refresh` | — | cookie |
-| POST | `/api/auth/logout` | — | cookie |
-| GET | `/api/auth/me` | `requireAuth` | Bearer |
+Offers (`offer.routes.js`): create, list mine, list received, get one, get thread, counter, accept, reject, withdraw. Accept is the interesting one — it runs a single Postgres transaction that accepts the offer, rejects sibling pending offers, marks the pitch funded, creates the investment, and opens the conversation between the two parties.
 
-**File:** `src/routes/business.routes.js` — 6 endpoints, `router.use(requireAuth)`
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/api/businesses` | List businesses I own |
-| POST | `/api/businesses` | Create a new business |
-| GET | `/api/businesses/:id` | Get one business (ownership checked) |
-| PATCH | `/api/businesses/:id` | Update (writes `profile_edit_history`) |
-| POST | `/api/businesses/:id/complete` | Mark profile complete |
-| GET | `/api/businesses/:id/history` | Profile edit history |
+Matches (`match.routes.js`): recompute for business, recompute for investor, investor feed, business feed, shortlist, pass. Plus an ensure endpoint that computes a match on-demand for a given (business, investor) pair — used when an investor clicks into a business they haven't been scored against yet.
 
-**File:** `src/routes/investor.routes.js` — 4 endpoints, `router.use(requireAuth)`
-| Method | Path |
-|---|---|
-| POST | `/api/investor/me` |
-| GET | `/api/investor/me` |
-| PATCH | `/api/investor/me` |
-| POST | `/api/investor/complete` |
+Conversations (`conversation.routes.js`): list threads, start thread, get one, unread count, list messages, send message, mark read.
 
-**File:** `src/routes/pitch.routes.js` — 8 endpoints, mixed auth
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/api/pitches` | Investor feed — live only, filter by stage/revenue/businessId |
-| POST | `/api/pitches` | Create draft — `businessId` in body |
-| GET | `/api/pitches/me` | `?businessId=` required |
-| GET | `/api/pitches/recently-viewed` | Powered by `events` table |
-| GET | `/api/pitches/:id` | Owner sees any status; others see only live |
-| PATCH | `/api/pitches/:id` | Draft only |
-| DELETE | `/api/pitches/:id` | Draft only |
-| POST | `/api/pitches/:id/publish` | Draft → live |
-| POST | `/api/pitches/:id/close` | Live → closed |
+Messages also have their own router for the endpoints that aren't nested under a conversation.
 
-**File:** `src/routes/offer.routes.js` — 9 endpoints, `router.use(requireAuth)`
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/api/offers` | Create offer on live pitch (investor) |
-| GET | `/api/offers/me` | My offers (investor) |
-| GET | `/api/offers/received` | Offers on my business (owner) |
-| GET | `/api/offers/:id` | One offer |
-| GET | `/api/offers/:id/thread` | Full counter thread |
-| POST | `/api/offers/:id/counter` | Counter (either side) |
-| POST | `/api/offers/:id/accept` | Accept (business owner) — atomic transaction |
-| POST | `/api/offers/:id/reject` | Reject (business owner) |
-| POST | `/api/offers/:id/withdraw` | Withdraw (original investor) |
+Investments (`investment.routes.js`): portfolio, summary, funding received, get one.
 
-**File:** `src/routes/investment.routes.js` — 4 endpoints, `router.use(requireAuth)`
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/api/investments/me` | My portfolio (investor) |
-| GET | `/api/investments/summary` | Aggregate stats |
-| GET | `/api/investments/received` | Funding received (business owner) |
-| GET | `/api/investments/:id` | One investment |
+Follows (`follow.routes.js`): follow business, unfollow business, follow investor, unfollow investor, list following, business followers, investor followers, business follow status, investor follow status. Nine endpoints. Polymorphic — the target type is in the URL.
 
-**File:** `src/routes/follow.routes.js` — 9 endpoints, `router.use(requireAuth)`
-| Method | Path |
-|---|---|
-| GET | `/api/follows/following` |
-| GET | `/api/follows/investor/followers` |
-| GET | `/api/follows/status/business/:id` |
-| GET | `/api/follows/status/investor/:id` |
-| POST | `/api/follows/business/:id` |
-| DELETE | `/api/follows/business/:id` |
-| GET | `/api/follows/business/:id/followers` |
-| POST | `/api/follows/investor/:id` |
-| DELETE | `/api/follows/investor/:id` |
+Notifications (`notification.routes.js`): list mine, mark read, unread count.
 
-**File:** `src/routes/conversation.routes.js` — 7 endpoints, `router.use(requireAuth)`
-| Method | Path |
-|---|---|
-| GET | `/api/conversations/unread-count` |
-| GET | `/api/conversations` |
-| POST | `/api/conversations` |
-| GET | `/api/conversations/:id` |
-| GET | `/api/conversations/:id/messages` |
-| POST | `/api/conversations/:id/messages` |
-| POST | `/api/conversations/:id/read` |
+Uploads (`upload.routes.js`): one endpoint. Multipart form, field name `file`. Returns `{ url, publicId }` from Cloudinary.
 
-**File:** `src/routes/upload.routes.js` — 1 endpoint, `router.use(requireAuth)`
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/api/uploads` | Multipart form, field name `file`. Returns `{ url, publicId }` |
+Verifications (`verification.routes.js`): create (runs OCR extraction synchronously), list mine, get one, apply. Apply is where extracted fields get merged into the business profile.
 
-**File:** `src/routes/verification.routes.js` — 4 endpoints, `router.use(requireAuth)`
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/api/verifications` | Create verification + run OCR extraction |
-| GET | `/api/verifications/me` | List my verifications (`?businessId=` optional) |
-| POST | `/api/verifications/:id/apply` | Merge extracted fields into business profile |
-| GET | `/api/verifications/:id` | One verification |
+Search (`search.routes.js`): one endpoint. `GET /businesses?q=`. Fuzzy match with a pg_trgm GIN index.
 
-**Total: 57 endpoints across 10 routers.**
+Readiness (`readiness.routes.js`): recompute score, get latest, get trend.
 
-### 3.3 Swagger UI
+Admin (`admin.routes.js`): verification review queue, user management, analytics.
 
-Interactive API docs served at `/docs` via `swagger-ui-express`. Spec built from JSDoc `@openapi` comments in each route file (`swagger-jsdoc`).
+Health (`health.routes.js`): one endpoint. Checks Postgres and Mongo connectivity and returns a status object.
 
-**Config:** `src/config/swagger.js`
-**Shared schemas:** `User`, `ErrorResponse`, `Business`, `BusinessProfile`, `ProfileEdit`, `InvestorProfile`, `Pitch`, `PitchCreate`, `PitchUpdate`, `Offer`, `OfferCreate`, `OfferCounter`, `Investment`, `FollowedUser`, `Pagination`, `ConversationSummary`, `Conversation`, `ConversationWithUser`, `Message`
+Swagger docs are served at `/docs`. The spec is built from `@openapi` JSDoc blocks in each route file, so the routes and docs can't drift apart.
 
-**Notes:**
-- `/refresh` and `/logout` read the refresh token from an httpOnly cookie — no `requireAuth` needed
-- `/me` requires a valid access token — the JWT payload seeds `req.user`
-- `/api/uploads` accepts multipart form data; Swagger UI supports the file picker
-
-### 3.4 Middleware order
-
-Middleware runs **left to right** as written in the route:
-
-```js
-router.post("/register",
-  validate(registerSchema),      // 1st — body must be valid
-  asyncHandler(authController.register)
-);
-```
-
-For protected routes:
-
-```js
-router.get("/me",
-  requireAuth,                    // 1st — sets req.user
-  asyncHandler(authController.me) // 2nd — uses req.user
-);
-```
-
-For file uploads:
-
-```js
-router.post("/",
-  requireAuth,                    // 1st — must be logged in
-  upload.single("file"),          // 2nd — parse multipart, validate file
-  asyncHandler(uploadController.uploadFile)
-);
-```
-
-**Order matters.** `upload.single()` requires `req.user` for the folder path, so `requireAuth` runs first.
-
-**Why no `requireRole`?** Authorization is capability-based now. A user can own businesses and be an investor at the same time. Services check ownership ("does this business belong to this user?") instead of role. See §5 for the pattern.
-
----
+A note on middleware order: it runs left to right. For a protected route, `requireAuth` runs first because downstream middleware depends on `req.user`. For a file upload route, `requireAuth` still runs first — the upload middleware builds the Cloudinary folder path from the user's ID.
 
 ## 4. Controllers
 
-**Folder:** `src/controllers/`
+Controllers are thin. They read from `req`, call a service function, and send a response.
 
-Controllers are thin HTTP wrappers. They:
-- Read from `req` (body, params, cookies, `req.user`, `req.file`)
-- Call a service
-- Send a response
-
-They do **not** contain business logic, and they do **not** import `db`.
-
-### 4.1 Controller catalog
-
-| File | Exports | Notes |
-|---|---|---|
-| `auth.controller.js` | `register`, `login`, `refresh`, `logout`, `me` | Sets/clears refresh cookie |
-| `business.controller.js` | `create`, `listMine`, `getOne`, `update`, `complete`, `history` | Multi-business |
-| `investor.controller.js` | `create`, `getMine`, `update`, `complete` | 1:1 with user |
-| `pitch.controller.js` | `create`, `listMine`, `getOne`, `getRecentlyViewed`, `update`, `publish`, `close`, `remove`, `listLive` | 9 exports |
-| `offer.controller.js` | `create`, `listMine`, `listReceived`, `getOne`, `getThread`, `counter`, `accept`, `reject`, `withdraw` | 9 exports |
-| `investment.controller.js` | `listMine`, `summary`, `listReceived`, `getOne` | 4 exports |
-| `follow.controller.js` | `followBusiness`, `unfollowBusiness`, `followInvestor`, `unfollowInvestor`, `getFollowing`, `getBusinessFollowers`, `getInvestorFollowers`, `getBusinessStatus`, `getInvestorStatus` | 9 exports |
-| `conversation.controller.js` | `list`, `start`, `getOne`, `unreadCount` | |
-| `message.controller.js` | `list`, `send`, `markRead` | |
-| `upload.controller.js` | `uploadFile` | Reads `req.file`, calls `uploadService` |
-| `verification.controller.js` | `create`, `listMine`, `getOne`, `apply` | Pipeline entry + apply |
-
-**Every controller export is wrapped in `asyncHandler` at the route layer.** Controllers can `throw` synchronously — `asyncHandler` catches and forwards.
-
-### 4.2 The ownership pattern
-
-Instead of `requireRole`, each service asserts ownership:
+A controller looks like this:
 
 ```js
-// src/services/business.service.js
+export const getOne = async (req, res) => {
+  const business = await businessProfileService.getBusiness(
+    req.params.id,
+    req.user.id
+  );
+  res.json({ business });
+};
+```
+
+That's it. The ownership check, the 404 case, the 403 case — all of it lives in the service. Controllers just know how to move data between HTTP and the service layer.
+
+Every controller export is wrapped in `asyncHandler` at the route layer. That wrapper is what makes try/catch unnecessary in the controller:
+
+```js
+export const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+```
+
+If the service throws synchronously or returns a rejected promise, the error lands in `errorHandler` and the response comes back structured. The controller never sees it.
+
+## 5. Services
+
+Services are where the actual thinking happens. They take plain data, apply rules, query the database, and either return a value or throw an `ApiError`.
+
+### Ownership instead of roles
+
+Before anything else, here's the pattern that shows up in almost every service:
+
+```js
 const assertBusinessOwnership = async (businessId, userId) => {
   const [business] = await db
     .select()
@@ -337,669 +142,213 @@ const assertBusinessOwnership = async (businessId, userId) => {
 };
 ```
 
-Called at the start of every business-scoped operation: pitch create, offer accept, verification apply, business update.
+Every business-scoped service call starts with this. Pitch creation, offer acceptance, verification apply, business updates, match recompute — all of them.
 
-**Why this replaced `requireRole`:**
-- A user can own businesses AND be an investor
-- Role is a UI concern, not a permissions concern
-- Ownership is the real check — "does this business belong to this user?"
+The reason it's a function call and not a route middleware is that the same business ID can come from different places. Sometimes it's in the URL (`PATCH /api/businesses/:id`). Sometimes it's in the body (creating a pitch). Sometimes it's derived from a related row (accepting an offer — the business comes from the pitch the offer is on). Middleware can only see the URL. A service function sees everything.
 
----
+This also means a user can be an investor and a business owner, and there's no ambiguity. The check is "does this business belong to this user?", not "is this user's role `business`?".
 
-## 5. Services
+### The service catalog
 
-**Folder:** `src/services/`
+Auth service handles register, login, refresh rotation, logout. Email uniqueness is checked before insert (the database unique constraint is a backstop). The same error message goes out for "user not found" and "wrong password" — no user enumeration. Refresh is a rotation: the old token gets marked revoked in Postgres, a new one is issued, and the new access token comes back with a new httpOnly cookie. If a stolen token gets used after rotation, the legitimate user's next refresh fails, which is the theft signal.
 
-Services hold business logic. They:
-- Receive plain data (not `req`/`res`)
-- Apply rules
-- Query the DB via `db` or Mongoose models
-- Throw `ApiError` for known failures
+Business profile service handles business CRUD, multi-business ownership, and the profile edit audit trail. Every field change on a business writes one row to `profile_edit_history`. That write happens inside the same transaction as the businesses update, so the audit row and the state change are atomic. `completeBusiness` validates required fields before flipping `isProfileComplete` — it throws a 400 listing missing fields rather than silently setting the flag.
 
-They are the **only** layer that imports from `models/postgres/index.js` or `models/mongo/`.
+Investor profile service is the investor equivalent. One profile per user. Ticket size range validation is checked against the existing profile — if you're setting a new minimum that exceeds your existing maximum, that's a 400.
 
-### 5.1 Auth service
+Pitch service handles the full lifecycle: draft, live, closed, funded, withdrawn. Only one live pitch per business at a time (enforced in the service). Valuation is denormalized — it's computed as `askAmount / (equityOffered / 100)` on every write. Publish requires the business profile to be complete and all required fields to be present. Every state transition logs an event: `pitch_published`, `pitch_closed`, `pitch_viewed`.
 
-**File:** `src/services/auth.service.js`
+Offer service is the most complex one. Counter-offers are just rows pointing at each other via `parentOfferId`, and alternation is enforced by a simple check: you can't counter an offer you initiated. Expiry is lazy — every read and every action checks `expiresAt` and marks the row expired if it's past. No cron job. Accept is a single transaction:
 
-| Function | Purpose |
-|---|---|
-| `registerUser({ name, email, password, role })` | Email uniqueness, hash password, insert user, issue tokens |
-| `loginUser({ email, password }, userAgent)` | Find, verify password, check `isActive`, issue tokens |
-| `refreshSession(rawRefreshToken, userAgent)` | Look up hashed token, verify not revoked/expired, rotate |
-| `logoutUser(rawRefreshToken)` | Mark token row as revoked |
+```
+begin transaction
+  update this offer → accepted
+  update sibling pending offers on the same pitch → rejected
+  update pitch → funded
+  insert investment row
+  insert conversation (or find existing)
+commit
+  → then: notifications, events, all outside the transaction
+```
 
-**Key rules:**
-- Email uniqueness before insert (DB unique constraint also enforces)
-- Same error for "user not found" and "wrong password" — no enumeration
-- Refresh rotation: old token revoked, new one issued on every refresh
-- `isActive` checked on login and refresh
+Five operations, all or nothing. The transaction boundaries are deliberate — event logs and notifications can fail without affecting the deal state, so they run after the commit. Mongoose writes also run after, because you can't hold a Postgres transaction open while waiting on a different database.
 
-### 5.2 Business service
+Investment service handles portfolio queries, funding received, and aggregate stats. Reads only — investments are only created inside the offer acceptance transaction.
 
-**File:** `src/services/business.service.js`
+Follow service handles polymorphic follows. The target type (business or investor) is derived from the URL segment, and the service does the type-specific work — following a business notifies the owner, following an investor notifies the investor. Notifications go through the shared notification service.
 
-| Function | Purpose |
-|---|---|
-| `createBusiness(userId, data)` | Insert new business owned by user |
-| `listMyBusinesses(userId)` | All businesses owned by user |
-| `getBusiness(id, userId)` | Fetch + ownership check |
-| `updateBusiness(id, userId, data)` | Update + write `profile_edit_history` for changed fields |
-| `completeBusiness(id, userId)` | Validate required fields, set `isProfileComplete = true` |
-| `getHistory(id, userId)` | Read `profile_edit_history` rows |
+Conversation service handles get-or-create for a pair of users. Participants are stored as an ordered pair (lower UUID first) with a check constraint, so `(X, Y)` and `(Y, X)` collapse automatically. The service sorts the incoming UUIDs before querying, so the caller never has to know the ordering rule. `lastMessageAt` is denormalized — it gets bumped on every message send so the chat list can sort without a join.
 
-**Key rules:**
-- Ownership asserted on every read/write
-- Field-level audit trail — one history row per changed field
-- `completeBusiness` validates required fields before setting the flag
+Message service handles send, list, mark read. Send enforces a daily limit of 500 messages per user, bumps `lastMessageAt` on the conversation, notifies the recipient through the notification service, and logs a `message_sent` event. The rate limit is checked before the insert; the notification and event happen after.
 
-### 5.3 Pitch service
+Notification service is cross-cutting. Every other service calls it. It's a single function: `createNotification`. Before inserting, it reads the recipient's `notify*` preferences from the users table and skips the insert if the user has disabled that type. It catches its own errors — a failed notification never fails the parent operation. This runs after any transaction, same as events.
 
-**File:** `src/services/pitch.service.js`
+Rate limit service is in-memory. Two daily counters per user — one for messages, one for new conversations. Resets at UTC midnight. Cleared on server restart, which is fine for a single-instance MVP. When the platform runs on multiple instances, the interface stays the same and the backing store becomes Redis.
 
-| Function | Purpose |
-|---|---|
-| `createPitch(businessId, userId, data)` | Insert draft (ownership + schema validation) |
-| `getMyPitches(businessId, userId)` | All pitches for a business (ownership) |
-| `getPitch(id, userId)` | Owner sees any status; others see only live. Logs `pitch_viewed` event for non-owner |
-| `updatePitch(id, userId, data)` | Draft only. Recomputes `valuation` when ask/equity changes |
-| `publishPitch(id, userId)` | Draft → live. Requires profile complete + valid fields + no other live pitch. Logs `pitch_published` |
-| `closePitch(id, userId)` | Live → closed. Logs `pitch_closed` |
-| `deletePitch(id, userId)` | Draft only |
-| `listLivePitches({ stage, revenueRange, businessId, limit, offset })` | Investor feed |
+Upload service wraps Cloudinary's `upload_stream()`. Takes a buffer, returns `{ url, publicId }`. Memory-efficient because it streams rather than writing to disk.
 
-**Key rules:**
-- Only one live pitch per business (service check + could be DB constraint later)
-- `valuation` denormalized — computed on write
-- `eventService.log()` called after state changes (never inside a transaction)
+Extraction service calls Gemini. It fetches the image, base64-encodes it, sends it with a per-document-type prompt, and parses the JSON response. The response is strict JSON — `responseMimeType: "application/json"`, `temperature: 0.1` — so there's no prose-with-JSON-inside to strip. The call is wrapped in `withRetry` with exponential backoff, and gated by a sliding-window rate limiter set to 14 requests per minute (Gemini's free tier is 15). If the response says the wrong document type was uploaded, the service returns `wrongDocument: true` and the caller marks the verification as rejected.
 
-### 5.4 Offer service
+Format validator service is pure functions. It validates GSTIN (15-character format, state code range, mod-36 checksum), Udyam (format plus a state code whitelist), PAN (format plus holder type), and Shop Act (length and character class). Each validator returns `{ valid, reason }`. The service also exposes `annotateFields` which takes a batch of OCR fields and annotates each with `formatValid` and `formatReason` where a validator exists. Those annotations get stored on the Mongo verification document and become the training signal for the trust model.
 
-**File:** `src/services/offer.service.js`
+Verification service bridges Mongo and Postgres. Creating a verification inserts a Mongo document with status `pending`, calls the extraction service, runs format validation on the result, and sets the final status based on confidence. Applying merges the OCR fields with any user-confirmed overrides, writes changes to the business row inside a Postgres transaction, writes one `profile_edit_history` row per changed field in the same transaction, then updates Mongo with `appliedFields`, then recomputes the verification tier from all of the business's documents and updates `businesses.verificationTier` if it changed. Events fire at every stage, always after the transaction.
 
-The most complex service — counter-offer threads + atomic acceptance.
+The tier computation is the point of the whole pipeline. No verifications is unverified. One or more verified documents gives basic. Two or more verified documents where the extracted company name collapses to a single unique value across all of them gives verified. If an Udyam certificate says "Acme Pvt Ltd" and a GST certificate says "Acme Private Limited", the tier stays at basic even though both documents verified successfully — because the two documents disagree on the legal name. That cross-document consistency check is what the paper is about.
 
-| Function | Purpose |
-|---|---|
-| `createOffer(investorId, data)` | Insert offer on live pitch. Logs `offer_created` |
-| `counterOffer(offerId, userId, data)` | Either side counters. `assertCanCounter` prevents countering own offer |
-| `acceptOffer(offerId, userId)` | **Atomic transaction**: accept + reject siblings + fund pitch + create investment + open conversation |
-| `rejectOffer(offerId, userId)` | Mark rejected |
-| `withdrawOffer(offerId, userId)` | Original investor only |
-| `getThread(offerId)` | Walk `parentOfferId` chain |
-| `listMyOffers(investorId)` | Investor's outgoing offers |
-| `listReceivedOffers(businessId, userId)` | Owner's incoming offers |
+Event service is the append-only activity log. `log()` is fire-and-forget — it validates the event type against the registry, records unknown types to `rejected_events` without throwing, and swallows its own errors. `logStrict()` is used in tests and throws. There's also `listMine`, `listForEntity`, `countSince`, and `getRecentlyViewedPitches` which dedupes by entity ID and orders by recency.
 
-**Key rules:**
-- **Counter alternation:** `if (offer.initiatedById === userId) throw` — turns alternate naturally
-- **Lazy expiry:** every action checks `expiresAt` and marks expired if past due. No cron.
-- **Atomic accept:** all 5 operations in one `db.transaction()`. Mongoose + events outside.
-- **One pending offer per investor per pitch** (enforced via DB constraint or service check)
+One important rule: `log()` is never called inside a `db.transaction()`. PGlite uses a single connection and deadlocks on nested transactions, and the same constraint applies to production for consistency. Events always fire after the transaction commits.
 
-### 5.5 Verification service
+Feed impression service logs which pitches appeared where. Batch insert, not per-impression. The signal is `(position, score, modelVersion)` — enough to compute position bias later when training a ranker. Same fire-and-forget pattern as events.
 
-**File:** `src/services/verification.service.js`
+Search service uses Postgres `pg_trgm`. It runs a query that scores each business by `similarity()` and `word_similarity()` against the concatenated search fields, with a GIN index for fast candidate lookup. Falls back to `ILIKE` for substring matches that trigrams miss. Returns the investor's match ID for each result if one exists, so the frontend can route directly to the match view instead of the public browse view.
 
-The bridge between Mongo `Verification` and Postgres `businesses.verificationTier`.
+Match service is the rule-based scorer. Five factors with fixed weights — sector (30), ticket size (25), geography (20), verification tier (15), readiness (10). The result is upserted into the matches table with a JSONB breakdown of each factor. `recomputeForInvestor` iterates all complete businesses and upserts a match row for each. `recomputeForBusiness` iterates all active investors. There's also `ensureMatchForInvestor` which computes a single pair on demand — used by the search flow so an investor can click into a business they haven't been scored against yet.
 
-| Function | Purpose |
-|---|---|
-| `createVerification({ userId, businessId, documentType, documentUrl, publicId })` | Ownership check → Mongo insert → call `extractFromDocument` → set status/confidence → log events |
-| `listMyVerifications(userId, { businessId })` | Query Mongo by user |
-| `getVerification(id, userId)` | Ownership check |
-| `applyToBusinessProfile(verificationId, userId, confirmedFields)` | Merge OCR + user-confirmed fields into `businesses`. Postgres transaction for `businesses` + `profile_edit_history`. Mongo update for `appliedFields`. Then compute tier and update `businesses.verificationTier` |
+CSV import services handle the external data loading pipeline. `csvImport.service.js` reads a CSV, batches rows into `raw_import_businesses`, and creates an `import_batches` row. `columnMatcher.service.js` and `llmColumnMatcher.service.js` map source columns to canonical fields — fuzzy match first, then an LLM fallback for columns the fuzzy matcher couldn't handle. `transformInferrer.service.js` looks at sample values and infers what transform to apply. `crosswalkBuilder.service.js` assembles the full mapping. `harmonization.service.js` applies the crosswalk to raw rows and produces business records, logging failures to `harmonization_errors`. `enrichment.service.js` fills in logo URLs and cover images after harmonization.
 
-**Key rules:**
-- **OCR never writes directly to `businesses`.** User confirms first.
-- **Postgres transaction** wraps `businesses` update + `profile_edit_history` insert. Mongoose calls are outside.
-- **Conflict detection:** if a field already has a different value, don't overwrite — add to `conflicts` array.
-- **`computeVerificationTier`** reads all verifications for the business: `unverified` → `basic` (1+ verified) → `verified` (2+ with matching `companyName`).
-- **Post-transaction logging:** events fire after the transaction. Failures don't roll back the operation.
-
-### 5.6 Extraction service
-
-**File:** `src/services/extraction.service.js`
-
-| Function | Purpose |
-|---|---|
-| `extractFromDocument(documentUrl, documentType)` | Fetch image → base64 → call Gemini Flash → parse JSON → return `{ fields, overallConfidence, raw, wrongDocument }` |
-
-**Key rules:**
-- **Rate limit:** `checkRateLimit("gemini", 14, 60_000)` — protects free tier 15 RPM
-- **Retry:** `withRetry()` wraps the Gemini call with exponential backoff + jitter
-- **Strict JSON:** Gemini is configured with `responseMimeType: "application/json"`, `temperature: 0.1`
-- **Per-document spec:** `DOCUMENT_SPECS` maps each doc type to expected fields with descriptions
-- **Wrong document detection:** if the image isn't the requested doc type, returns `{ error: "wrong_document" }` and the caller marks status `rejected`
-
-### 5.7 Upload service
-
-**File:** `src/services/upload.service.js`
-
-| Function | Purpose |
-|---|---|
-| `uploadToCloudinary(buffer, folder, originalName)` | Promise-wrapped `upload_stream()` call. Returns `{ url, publicId }` |
-
-**Key rules:**
-- Uses `upload_stream()` — memory-efficient for buffers
-- `resource_type: "auto"` — Cloudinary detects image vs PDF
-- Sanitized `public_id` — strips unsafe characters, caps length
-
-### 5.8 Event service
-
-**File:** `src/services/event.service.js`
-
-| Function | Purpose |
-|---|---|
-| `log(event)` | Fire-and-forget. Validates against registry. Records unknown types to `rejected_events`. Never throws. |
-| `logStrict(event)` | Throws on failure. Used in tests. |
-| `listMine(userId, { eventType, limit, offset })` | My recent events |
-| `listForEntity(entityType, entityId, { limit, offset })` | Events for one entity |
-| `countSince(eventType, since)` | Aggregations |
-| `getRecentlyViewedPitches(userId, limit)` | Deduped by `entityId`, ordered by recency |
-
-**Key rules:**
-- **Whitelist enforced:** `validateEventType()` reads `src/events/registry.js`. Unknown types → `rejected_events` table.
-- **Fire-and-forget:** `log()` swallows its own errors. Never fails the parent operation.
-- **Never inside a transaction:** PGlite (single connection) deadlocks if `log()` is called inside `db.transaction()`. Always post-transaction.
-- **`entityId` is varchar:** holds UUIDs (Postgres entities) AND Mongo ObjectIds. Not a foreign key.
-
-### 5.9 Feed impression service
-
-**File:** `src/services/feedImpression.service.js`
-
-| Function | Purpose |
-|---|---|
-| `logBatch(userId, impressions)` | Batch insert — one row per (user, pitch, position) |
-| `listForPitch(pitchId, { limit, offset })` | Analytics |
-| `listForUser(userId, { limit, offset })` | ML training |
-| `countForPitch(pitchId)` | Aggregation |
-
-**Key rules:**
-- **Batch insert only** — not per-impression. High volume.
-- **Position-bias signal** — `position`, `score`, `modelVersion` all stored.
-- Fire-and-forget, same as events.
-
-### 5.10 Notification service
-
-**File:** `src/services/notification.service.js`
-
-Cross-cutting. Called by follow, message, offer, verification services.
-
-| Function | Purpose |
-|---|---|
-| `createNotification({ userId, actorId, type, title, body, metadata })` | Insert row, respecting recipient's `notify*` prefs |
-
-**Key rules:**
-- Catches its own errors — a failed notification never fails the parent operation
-- Respects `users.notifyNewMatch`, `notifyNewMessage`, etc.
-- Called post-transaction, same as events
-
-### 5.11 Rate limit service
-
-**File:** `src/services/rateLimit.service.js`
-
-| Function | Purpose |
-|---|---|
-| `enforceLimit(userId, action, limit)` | Throws `ApiError.tooManyRequests` if over |
-| `checkLimit(userId, action, limit)` | Read-only |
-| `_resetAll()` | Test helper |
-
-**Current limits:** `send_message` (500/day), `new_conversation` (50/day).
-
-### 5.12 Conversation service
-
-**File:** `src/services/conversation.service.js`
-
-| Function | Purpose |
-|---|---|
-| `getOrCreateConversation(userA, userB)` | Sorts UUIDs, upserts ordered pair |
-| `listMyConversations(userId)` | Sorted by `lastMessageAt` desc |
-| `getConversation(id, userId)` | Ownership check via participation |
-| `unreadCount(userId)` | Total unread across all threads |
-
-### 5.13 Message service
-
-**File:** `src/services/message.service.js`
-
-| Function | Purpose |
-|---|---|
-| `sendMessage(conversationId, senderId, body)` | Rate limit → insert → bump `lastMessageAt` → notify recipient → log event |
-| `listMessages(conversationId, userId, { limit, offset })` | Thread load |
-| `markRead(conversationId, userId)` | Marks all messages from the other participant as read |
-
----
+AI service is a thin wrapper around the Gemini client used by the pitch assistant widget. Different from the extraction service — that one is doc-specific and uses a per-document spec. This one is generic.
 
 ## 6. Middleware
 
-**Folder:** `src/middleware/`
+Auth middleware has one export: `requireAuth`. Reads the bearer token from the Authorization header, verifies the JWT, sets `req.user = { id, role }`, and calls `next()`. On failure, throws a 401.
 
-Middleware runs before the controller. Each function receives `(req, res, next)`.
+Validate middleware is a factory. `validate(schema, source = "body")` returns a middleware that runs `schema.safeParse(req[source])`. On success, it replaces `req[source]` with the parsed data — which strips unknown fields as a side effect. On failure, it throws a 400 with the Zod error details. The `source` parameter defaults to `"body"` but accepts `"query"` or `"params"` for routes that validate those.
 
-### 6.1 `auth.middleware.js`
+Upload middleware is a configured Multer instance. Memory storage (buffer in RAM, streamed to Cloudinary — no temp files on disk), a 10 MB size cap, one file per request, and a file filter that only accepts JPEG, PNG, WebP, and PDF — checking both the MIME type and the extension, because a malicious upload can spoof either one.
 
-**Export:** `requireAuth`
-
-| Middleware | Behavior |
-|---|---|
-| `requireAuth` | Reads `Authorization: Bearer <token>`. Verifies JWT. Sets `req.user = { id, role }`. Calls `next(ApiError 401)` on failure. |
-
-**Why `requireRole` was removed:** The multi-business refactor removed hard role gates. Authorization is now capability-based — services check ownership. A user can be both a business owner and an investor. Role remains in the JWT for UI routing decisions but doesn't gate routes.
-
-### 6.2 `validate.middleware.js`
-
-**Export:** `validate(schema, source = "body")`
-
-Factory that returns a middleware. Runs `schema.safeParse(req[source])`:
-- Success → replaces `req[source]` with parsed data (strips unknown fields)
-- Failure → `next(ApiError.badRequest("Validation failed", details))`
-
-**`source` param:** defaults to `"body"`, but can be `"query"` or `"params"`. Used in pitch list (`businessId` query) and follow list pagination.
-
-### 6.3 `upload.middleware.js`
-
-**Export:** `upload` (Multer instance)
-
-- `storage: multer.memoryStorage()` — buffer in RAM, streamed to Cloudinary
-- `limits: { fileSize: 10 * 1024 * 1024, files: 1 }` — 10 MB, one file
-- `fileFilter` — only JPEG, PNG, WebP, PDF (both MIME type and extension checked)
-
-**Why memory storage:** No temp files on disk. The buffer goes straight to Cloudinary's `upload_stream()`.
-
-### 6.4 `error.middleware.js`
-
-**Export:** `errorHandler(err, req, res, next)`
-
-The **last** middleware registered in `app.js`. Handles:
-
-1. **Multer errors** — `LIMIT_FILE_SIZE` → 413, `LIMIT_UNEXPECTED_FILE` → 400
-2. **File type rejection** — `"Invalid file type"` message → 415
-3. **`ApiError`** → returns `{ error, details? }` with the error's status code
-4. **Unknown errors** → logs to console, returns 500 (with stack in dev)
-
-**Why:** Controllers use `asyncHandler` to forward errors here. No controller writes error responses itself.
-
----
+Error middleware is the last one registered. It handles Multer's specific error codes (413 for file too large, 400 for unexpected field), the file-type rejection (415), `ApiError` instances (returns the error's status and message), and unknown errors (logs and returns 500, with a stack trace in dev). This is the only place that writes an error response.
 
 ## 7. Validators
 
-**Folder:** `src/validators/`
+One file per domain. All Zod.
 
-Zod schemas. One file per domain.
+Auth validator handles register and login. Email is lowercased at validation time so `Alice@X.com` and `alice@x.com` are treated as the same address. Role is restricted to `business` or `investor` — `admin` is rejected, because admins are seeded directly in the database, not self-registered.
 
-| File | Schemas | Notes |
-|---|---|---|
-| `auth.validator.js` | `registerSchema`, `loginSchema` | Email lowercased, role limited to business/investor |
-| `business.validator.js` | `createBusinessSchema`, `updateBusinessSchema` | `companyName` min 2 chars |
-| `investorProfile.validator.js` | `updateInvestorProfileSchema` | |
-| `pitch.validator.js` | `createPitchSchema` (includes `businessId`), `updatePitchSchema` | |
-| `offer.validator.js` | `createOfferSchema`, `counterOfferSchema` | |
-| `follow.validator.js` | `paginationQuerySchema` | |
-| `conversation.validator.js` | `startConversationSchema`, `sendMessageSchema` | |
-| `upload.validator.js` | (none — Multer handles file validation) | |
-| `verification.validator.js` | `createVerificationSchema`, `listVerificationsQuerySchema`, `applyVerificationSchema` | `documentType` enum: udyam/gst/shop_act |
+Business profile validator handles create and update. String fields all have `.trim()` — this prevents the " " bug where someone enters spaces and the field saves as whitespace instead of empty. `companyName` has a minimum length. Unknown fields are stripped by Zod.
 
-**Notes:**
-- Email lowercased at validation time → `Alice@X.com` matches `alice@x.com`
-- `role: "admin"` is **rejected** — admins are seeded, not self-signed-up
-- Unknown extra fields in the body are **stripped** (zod default)
+Investor profile validator handles updates. Enforces that `minTicketSize <= maxTicketSize` when both are present.
 
----
+Pitch validator handles create and update. Required fields are checked at create time. `businessId` is required in the body for create.
+
+Offer validator handles create and counter. Amount positive, equity between 0 and 100.
+
+Conversation validator handles start and send message. Message body has a minimum and maximum length.
+
+Verification validator handles create, list, and apply. `documentType` is restricted to `udyam`, `gst`, or `shop_act`. `documentUrl` must be a valid URL.
+
+Follow validator has just a pagination schema.
+
+A general note: Zod strips unknown fields by default. That's why you can't escalate privilege by sending extra fields in a request body — they get removed before the service sees them.
 
 ## 8. Utils
 
-**Folder:** `src/utils/`
+ApiError is a class with static factory methods for each status code: `badRequest`, `unauthorized`, `forbidden`, `notFound`, `conflict`, `tooManyRequests`. Instances carry `statusCode`, `message`, and optional `details`.
 
-Pure functions and helpers. No DB, no HTTP.
+AsyncHandler is the promise wrapper shown earlier. Every controller export goes through it at the route layer.
 
-### 8.1 `apiError.js`
+Password helpers wrap bcrypt. `hashPassword` uses 12 salt rounds. `verifyPassword` does a constant-time comparison.
 
-**Export:** `ApiError` class
+Token helpers wrap JWT. `signAccessToken` issues a 15-minute JWT with `{ id, role }` in the payload. `verifyAccessToken` throws on invalid or expired. `generateRefreshToken` returns `{ raw, hash }` — the raw value goes into the httpOnly cookie, the hash goes into Postgres. `hashRefreshToken` is deterministic SHA256.
 
-```js
-new ApiError(statusCode, message, details)
-```
+Retry helpers wrap async functions with exponential backoff and jitter. `withRetry(fn, options)` takes an `attempts` count and a `shouldRetry` predicate. `isTransientError` matches the errors that are worth retrying — 429, timeouts, 5xx, ECONNRESET. Used by the Gemini call.
 
-Static factories:
-- `ApiError.badRequest(msg, details)` → 400
-- `ApiError.unauthorized(msg?)` → 401
-- `ApiError.forbidden(msg?)` → 403
-- `ApiError.notFound(msg?)` → 404
-- `ApiError.conflict(msg)` → 409
-- `ApiError.tooManyRequests(msg?)` → 429
+Rate limiter util is a sliding window counter. `checkRateLimit(key, max, windowMs)` throws a 429 with a `retryAfterMs` hint if the window is full. Separate from the daily rate limit service — this one is meant for tight per-second limits like Gemini's RPM cap.
 
-### 8.2 `asyncHandler.js`
+## 9. Events registry
 
-**Export:** `asyncHandler(fn)`
+The registry is an object in `src/events/registry.js` with one entry per allowed event type. Each entry has a `version` (bumped when the metadata shape changes), a list of `requiredFields`, a short `purpose` string, and a `retention` policy.
 
-```js
-export const asyncHandler = (fn) => (req, res, next) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
-};
-```
+Registered types cover pitches, offers, follows, messages, auth, and verification. The full list is in the registry.
 
-### 8.3 `password.js`
+The point of the registry is that unknown event types don't silently fail. `eventService.log()` checks the type before inserting. If it's registered, the insert happens. If it's not, the call is recorded in `rejected_events` — one row per distinct attempted type, with a counter and timestamps — and the function returns without throwing.
 
-**Exports:** `hashPassword(plain)`, `verifyPassword(plain, hash)`
+That means adding a new event type requires a code change to the registry, not a database migration. And the `rejected_events` table tells you which types the system is asking for. Every week or so you can run a query like `SELECT attempted_type, count FROM rejected_events WHERE count > 100` and see what's missing.
 
-- `hashPassword` — bcrypt, 12 salt rounds
-- `verifyPassword` — constant-time compare
+## 10. Error handling
 
-### 8.4 `tokens.js`
+One path. Service throws `ApiError`. Async handler forwards it. Error handler formats the response as `{ error, details? }`.
 
-**Exports:**
-- `signAccessToken({ id, role })` — JWT, 15-min TTL
-- `verifyAccessToken(token)` — throws on invalid/expired
-- `generateRefreshToken()` — returns `{ raw, hash }`
-- `hashRefreshToken(raw)` — SHA256, deterministic
+The status codes used across the API:
 
-### 8.5 `retry.js`
+400 for validation failures. The body has a `details` field with the Zod error.
+401 for missing or invalid tokens, wrong credentials.
+403 for ownership violations — "You do not own this business".
+404 for missing resources. Note that some ownership failures return 404 instead of 403 — specifically, drafts that a non-owner tries to fetch return 404 so an attacker can't distinguish "exists but you can't see it" from "doesn't exist".
+409 for conflicts — duplicate email, second live pitch on the same business.
+413 for oversized uploads.
+415 for wrong file types.
+429 for rate limits.
+500 for anything unexpected, with a stack trace in dev but not in prod.
 
-**Exports:**
-- `withRetry(fn, { attempts, baseDelayMs, maxDelayMs, shouldRetry })` — exponential backoff + jitter
-- `isTransientError(err)` — matches 429, timeout, 5xx, ECONNRESET
+Logging is currently `console.error` in the error handler for unknown errors. `ApiError`s aren't logged — they're expected failures, not bugs. `eventService.log()` and `feedImpression.logBatch()` catch their own errors and log with a prefix so they're easy to grep for. Structured logging is a future improvement.
 
-**Why:** Gemini occasionally returns 429 or times out. Retry makes extraction resilient without changing the calling code.
+## 11. End-to-end: creating a verification
 
-### 8.6 `rateLimiter.js`
+This is the most complex request in the system, so it's worth tracing all the way through.
 
-**Exports:**
-- `checkRateLimit(key, maxRequests, windowMs)` — sliding window, throws 429 with `retryAfterMs`
-- `_resetRateLimiter()` — test helper
+The request is a POST to `/api/verifications` with a body containing `businessId`, `documentType`, `documentUrl`, and `publicId`. The URL and public ID come from a separate call to `/api/uploads` that already put the file in Cloudinary.
 
-**Why:** Gemini free tier = 15 RPM. Set the limit to 14 to leave headroom. In-memory; swap to Redis when multi-instance.
+Express matches the route. `requireAuth` runs and verifies the JWT. `validate(createVerificationSchema)` runs and confirms the document type is one of the three allowed values and the URL is actually a URL. Then the controller runs.
 
----
+The controller reads `req.body` and `req.user.id` and calls `verificationService.createVerification`. Nothing else.
 
-## 9. Events Registry
+Inside the service:
 
-**Folder:** `src/events/`
+First, `assertBusinessOwnership` fetches the business and confirms the caller owns it. If not, this throws and the request ends here with a 403.
 
-### 9.1 `registry.js`
+Then a new Mongo document is created with status `pending`, the user ID, the business ID, the document type, the URL, and the public ID.
 
-**Export:** `ALLOWED_EVENTS` object + `validateEventType()` + `validateMetadata()`
+Then `verification_started` is logged. Fire and forget — if the event insert fails, the pipeline continues.
 
-Every event type must be registered. Each entry has:
-- `version` — bump when metadata shape changes
-- `requiredFields` — array of strings
-- `purpose` — why it exists (documentation + future review)
-- `retention` — `"forever"` or a period
+Then the extraction service runs. It fetches the image from Cloudinary, base64-encodes it, checks the rate limiter (14 requests per minute, sliding window), and calls Gemini with a prompt built from the document type's spec. The call is wrapped in `withRetry` with three attempts and exponential backoff. Gemini returns strict JSON containing a map of field name to `{ value, confidence }`.
 
-**Registered event types:**
-- Pitch: `pitch_viewed`, `pitch_published`, `pitch_closed`, `pitch_shortlisted`, `pitch_dismissed`
-- Offer: `offer_created`, `offer_accepted`, `offer_rejected`, `offer_countered`
-- Follow: `follow_created`
-- Message: `message_sent`
-- Auth: `user_registered`
-- Verification: `verification_started`, `verification_extracted`, `verification_applied`, `verification_tier_changed`, `verification_failed`
+Then the format validator runs on the extracted fields. GSTIN, Udyam registration numbers, PAN, and Shop Act certificate numbers each have their own validator. Each field that has a validator gets annotated with `formatValid` and `formatReason`. Fields without a validator pass through unchanged.
 
-**Why a registry:** Unknown event types are rejected. Attempts land in `rejected_events` — the system tells you which events are needed, without a code change.
+Then the Mongo document gets updated: the annotated fields, the overall confidence, the format validation summary, and the status. Status is `rejected` if Gemini said the wrong document was uploaded, `verified` if overall confidence is 0.7 or higher, and `needs_review` otherwise.
 
----
+Then `verification_extracted` is logged, with the confidence and format validation counts in the metadata.
 
-## 10. Error Handling
+If anything throws during extraction, the catch block sets status to `needs_review` and logs `verification_failed`. The verification record still exists — a user can see what went wrong and try again.
 
-Errors flow through one path:
+The response is the verification document with its final status, confidence, and the annotated OCR data.
 
-```
-Service throws ApiError
-    │
-    ▼
-asyncHandler catches → next(err)
-    │
-    ▼
-errorHandler formats response
-    │
-    ▼
-{ error: "message", details?: {} }
-```
+The apply step is a separate request. When the user clicks Apply, the service merges the OCR fields with any values the user confirmed in the UI, compares each against the current business value, writes changes inside a Postgres transaction (business row plus `profile_edit_history` rows), updates the Mongo document with the applied field list, recomputes the tier from all of the business's verifications, and updates the businesses row if the tier changed. Three events fire — `verification_applied`, and possibly `verification_tier_changed`. All after the transaction.
 
-### 10.1 Error response shapes
+Files touched by the create step alone: route, auth middleware, validate middleware, verification validator, verification controller, verification service, extraction service, format validator service, event service, retry util, rate limiter util, Mongo verification model, Postgres business model, events registry. Fourteen files for one request.
 
-| Status | Body |
-|---|---|
-| 400 | `{ error: "Validation failed", details: {...} }` |
-| 401 | `{ error: "No token provided" }` or `{ error: "Invalid credentials" }` |
-| 403 | `{ error: "You do not own this business" }` |
-| 404 | `{ error: "Not found" }` |
-| 409 | `{ error: "Email already in use" }` |
-| 413 | `{ error: "File too large. Maximum allowed size is 10 MB." }` |
-| 415 | `{ error: "Invalid file type. Only JPEG, PNG, WebP, and PDF are allowed." }` |
-| 429 | `{ error: "Rate limit exceeded..." }` |
-| 500 | `{ error: "Internal server error" }` (+ stack in dev) |
-
-### 10.2 Logging
-
-- Unknown errors: `console.error` in `errorHandler` — replace with structured logger later
-- No logging for expected `ApiError`s (they're not bugs)
-- `eventService.log()` catches its own errors and logs with `[event.service.log]` prefix
-- `feedImpression.logBatch()` same pattern
-
----
-
-## 11. End-to-End Example: `POST /api/verifications`
-
-Trace of the most complex request in the system — document upload → OCR → verification record.
-
-**Request:**
-```http
-POST /api/verifications
-Authorization: Bearer eyJhbGciOi...
-Content-Type: application/json
-
-{
-  "businessId": "96e9e215-36ea-4d17-ac4f-0f11edd8c65a",
-  "documentType": "udyam",
-  "documentUrl": "https://res.cloudinary.com/diohvxzaq/image/upload/v.../udyam.png",
-  "publicId": "verification-docs/user-id/..."
-}
-```
-
-**Step 1 — Express router**
-`app.js` → `app.use("/api/verifications", verificationRoutes)` → matches `POST /`.
-
-**Step 2 — Middleware chain**
-- `requireAuth` — verifies JWT, sets `req.user = { id, role }`
-- `validate(createVerificationSchema)` — Zod parses body, confirms `documentType` is in enum, `documentUrl` is a URL
-
-**Step 3 — Controller**
-`verificationController.create(req, res)`:
-- Reads `req.body` + `req.user.id`
-- Calls `verificationService.createVerification({ userId, ...req.body })`
-
-**Step 4 — Service (`createVerification`)**
-1. `assertBusinessOwnership(businessId, userId)` — checks `businesses.ownerId === userId`
-2. `Verification.create({ userId, businessId, documentType, documentUrl, status: "pending" })` — Mongo insert
-3. `eventService.log({ eventType: "verification_started", ... })` — fire-and-forget
-4. Calls `extractFromDocument(documentUrl, documentType)`:
-   - Fetch image → base64
-   - `checkRateLimit("gemini", 14, 60_000)`
-   - `withRetry(() => model.generateContent([...]), { attempts: 3, shouldRetry: isTransientError })`
-   - Parse strict JSON → compute mean confidence
-5. Based on result:
-   - `wrongDocument: true` → status `rejected`, log `verification_failed`
-   - `confidence >= 0.7` → status `verified`, log `verification_extracted`
-   - else → status `needs_review`, log `verification_extracted`
-6. `verification.save()` — Mongo update
-
-**Step 5 — Response**
-```http
-HTTP/1.1 201 Created
-
-{
-  "verification": {
-    "_id": "6ac79c7ec7ef622a494bdc8e",
-    "userId": "c4e0f094-...",
-    "businessId": "96e9e215-...",
-    "documentType": "udyam",
-    "status": "verified",
-    "confidenceScore": 0.95,
-    "ocrExtractedData": {
-      "enterprise_name": { "value": "Acme Pvt Ltd", "confidence": 0.95 },
-      "udyam_registration_number": { "value": "UDYAM-XX-00-0000000", "confidence": 0.97 }
-    },
-    "createdAt": "2026-10-08T..."
-  }
-}
-```
-
-**Files touched:**
-1. `src/app.js`
-2. `src/routes/verification.routes.js`
-3. `src/middleware/auth.middleware.js`
-4. `src/middleware/validate.middleware.js`
-5. `src/validators/verification.validator.js`
-6. `src/controllers/verification.controller.js`
-7. `src/services/verification.service.js`
-8. `src/services/extraction.service.js`
-9. `src/services/event.service.js`
-10. `src/utils/retry.js`
-11. `src/utils/rateLimiter.js`
-12. `src/models/mongo/verification.model.js`
-13. `src/models/postgres/business.model.js`
-14. `src/events/registry.js`
-
-Fourteen files, one request. That's the verification pipeline.
-
-**Note:** `applyToBusinessProfile` (the apply step) touches even more — it uses a Postgres transaction across `businesses` + `profile_edit_history`, then updates Mongo, then computes tier from all verifications, then updates `businesses.verificationTier`, then logs two more events. See §5.5.
-
----
+The apply step touches even more, but that's the pipeline. It's long because every step has a reason to exist and the failure modes are all handled.
 
 ## 12. Testing
 
-Tests mirror the layer structure.
+47 test files, 619 tests. `npm test` runs them all. GitHub Actions runs them on every push.
 
-**Folder:** `server/tests/`
+Unit tests cover pure logic — password hashing, token signing, retry backoff, rate limiter, Zod schemas, the middleware that doesn't need a database. These run fast and don't touch Postgres or Mongo.
 
-| Test file | Layer | Tests |
-|---|---|---|
-| `tests/utils/password.test.js` | Utils | 5 |
-| `tests/utils/tokens.test.js` | Utils | 12 |
-| `tests/utils/retry.test.js` | Utils | 7 |
-| `tests/utils/rateLimiter.test.js` | Utils | 4 |
-| `tests/utils/auth.validator.test.js` | Validators | 14 |
-| `tests/validators/businessProfile.validator.test.js` | Validators | 12 |
-| `tests/validators/investorProfile.validator.test.js` | Validators | 13 |
-| `tests/validators/pitch.validator.test.js` | Validators | 28 |
-| `tests/validators/offer.validator.test.js` | Validators | 23 |
-| `tests/middleware/requireAuth.test.js` | Middleware | 9 |
-| `tests/auth/register.test.js` | Integration | 10 |
-| `tests/auth/login.test.js` | Integration | 10 |
-| `tests/auth/refresh.test.js` | Integration | 14 |
-| `tests/health.test.js` | Smoke | 1 |
-| `tests/business/profile.test.js` | Integration | ~16 |
-| `tests/investor/profile.test.js` | Integration | ~12 |
-| `tests/pitches/pitch.test.js` | Integration | 33 |
-| `tests/pitches/recently-viewed.test.js` | Integration | 3 |
-| `tests/offers/offer.test.js` | Integration | ~25 |
-| `tests/investments/investment.test.js` | Integration | ~10 |
-| `tests/follows/follow.test.js` | Integration | ~15 |
-| `tests/conversations/conversation.test.js` | Integration | ~11 |
-| `tests/conversations/message.test.js` | Integration | ~11 |
-| `tests/uploads/upload.test.js` | Integration | 5 |
-| `tests/verifications/verification.test.js` | Integration | 5 |
-| `tests/verifications/apply.test.js` | Integration | 6 |
-| `tests/services/rateLimit.service.test.js` | Service | 8 |
-| `tests/services/businessProfile.service.test.js` | Service | 20 |
-| `tests/services/investorProfile.service.test.js` | Service | 12 |
-| `tests/services/pitch.service.test.js` | Service | 37 |
-| `tests/services/offer.service.test.js` | Service | 49 |
-| `tests/services/follow.service.test.js` | Service | 24 |
-| `tests/services/conversation.service.test.js` | Service | 18 |
-| `tests/services/message.service.test.js` | Service | 15 |
-| `tests/services/event.service.test.js` | Service | 11 |
-| `tests/services/event-integration.test.js` | Integration | 3 |
-| `tests/services/feedImpression.service.test.js` | Service | 4 |
-| `tests/services/rejectedEvent.test.js` | Service | 4 |
+Integration tests drive the Express app with Supertest. They hit real endpoints and check real responses. Every endpoint test covers the happy path plus the error paths — 401 without a token, 400 for bad input, 403 for wrong owner, 404 for missing resources, 409 for conflicts.
 
-**Total:** ~524 tests. Run with `npm test`. Runs on every push via GitHub Actions.
+Service tests sit between the two. They call service functions directly with plain data, no HTTP involved. Most of the ownership logic and business rules are tested here because it's faster than going through HTTP.
 
-**Approach:**
-- **Unit tests** for pure logic (utils, validators, middleware) — fast, no DB
-- **Integration tests** for endpoints — Supertest hits the app
-- **PGlite** for Postgres in tests — in-memory WASM, no Docker
-- **`mongodb-memory-server`** for Mongo in tests — real Mongoose behavior, no external service
-- Every endpoint test covers the happy path + error paths (401, 400, 403, 404, 409)
+The test harness is `tests/setup.js`. It loads every migration file in `drizzle/` in sorted order into a fresh PGlite instance and applies them. PGlite is Postgres compiled to WebAssembly — the same SQL, no Docker required. Since PGlite doesn't ship `pg_trgm` in all versions, the harness loads the extension explicitly and the migration that creates the trigram index is skipped if the extension isn't available. In production, `pg_trgm` was enabled once on Neon and the index exists there.
 
-**Test harness:** `tests/setup.js` loads all `drizzle/*.sql` migrations into PGlite and spins up an in-memory MongoDB. `vitest.config.js` sets env defaults so CI doesn't need real Cloudinary/Gemini credentials — services that would call external APIs are mocked per test.
+Mongo uses `mongodb-memory-server`. Real Mongoose behavior, in-memory, no external service. Each test file spins up its own instance.
 
----
+Environment defaults are set in `vitest.config.js` so CI doesn't need real Cloudinary or Gemini credentials. Services that would call external APIs are mocked per test.
 
-## 13. Configuration
+A testing pattern worth noting: when a service calls another service, tests often spy on the inner service's export. For that to work, the caller needs to import the module as a namespace (`import * as llmMatcher from "..."`) rather than destructuring the specific function at import time (`import { mapUnmappedColumns } from "..."`). Named imports bind directly and can't be intercepted by `vi.spyOn` on the namespace. This bit us once with the LLM column matcher — the tests passed locally on a version that had a namespace import, and CI failed when someone switched to a named import during a refactor.
 
-### 13.1 Environment
+## 13. Config
 
-**File:** `src/config/env.js`
+Environment is loaded in `src/config/env.js`. It reads `dotenv`, validates that required variables are present, and exports a typed `env` object. Every other file imports from this, never from `process.env` directly. That rule exists because in ESM all imports hoist — dotenv has to run inside a module that others import, not at the top of the entry point.
 
-Loads `dotenv`, validates required vars, exports a typed `env` object.
+Required variables: `PORT`, `POSTGRES_URI`, `MONGO_URI`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `GEMINI_API_KEY`.
 
-**Required vars:**
-- `PORT`
-- `POSTGRES_URI`
-- `MONGO_URI`
-- `JWT_SECRET`
-- `JWT_REFRESH_SECRET`
-- `CLOUDINARY_CLOUD_NAME`
-- `CLOUDINARY_API_KEY`
-- `CLOUDINARY_API_SECRET`
-- `GEMINI_API_KEY`
+Postgres connection is a `pg` pool with IPv4 forced (some ISPs misroute IPv6 and the connection hangs without it). Idle timeout is 30 seconds.
 
-**Rule:** Every file imports from `env.js`. Never `process.env` directly. In ESM, all imports hoist — dotenv must run inside a module that others import, not at the top of `server.js`.
+Mongo connection is lazy. `db.mongo.js` exports a `connectMongo()` function that `server.js` calls at boot. Tests never call it — they use `mongodb-memory-server` instead. Keeping this lazy means importing `app.js` doesn't try to connect to Atlas.
 
-### 13.2 Database connections
+Cloudinary config validates the three `CLOUDINARY_*` variables at import time and throws immediately if any are missing. Fail loudly at startup, not silently on the first upload.
 
-**File:** `src/config/db.postgres.js` — pool via `pg`, forced IPv4, idle timeout 30s
-**File:** `src/config/db.mongo.js` — exports `connectMongo()` (called lazily by `server.js`, not at import)
+Swagger config builds the OpenAPI spec from the `@openapi` JSDoc blocks in route files. The spec is served at `/docs` along with the interactive UI.
 
-**Why lazy Mongo:** Tests import `app.js` without connecting to Atlas. `tests/setup.js` owns the test connection via `mongodb-memory-server`.
-
-### 13.3 Cloudinary
-
-**File:** `src/config/cloudinary.js`
-
-Validates `CLOUDINARY_*` env vars at import, configures the SDK, exports the configured client. Throws at startup if any are missing — fails loudly, not silently.
-
-### 13.4 Swagger
-
-**File:** `src/config/swagger.js`
-
-Builds the OpenAPI spec from `@openapi` JSDoc blocks in `src/routes/*.js`. Serves UI at `/docs`.
-
----
-
-## 14. Anchor Links for Cross-Referencing
-
-From `overview.md`, link as:
-
-```markdown
-See [logic.md §3 Routes](./logic.md#3-routes)
-See [logic.md §4 Controllers](./logic.md#4-controllers)
-See [logic.md §5 Services](./logic.md#5-services)
-See [logic.md §6 Middleware](./logic.md#6-middleware)
-See [logic.md §11 End-to-End Example](./logic.md#11-end-to-end-example-post-apiverifications)
-```
-
----
-
-*Last updated: 2026-10-08*
-
----
-
-## What changed vs the previous version
-
-| Area | Change |
-|---|---|
-| **Services** | 8 → 16 — added `business`, `offer`, `investment`, `upload`, `extraction`, `verification`, `event`, `feedImpression` |
-| **Controllers** | 3 → 11 — added all business domain + uploads + verifications |
-| **Routes** | 32 → 57 endpoints across 10 routers |
-| **`requireRole`** | Removed entirely. Authorization is ownership-based in services. |
-| **`business_profiles` → `businesses`** | Multi-business model — `POST /api/businesses` creates, ownership is `ownerId` not `userId` |
-| **Follow routes** | 5 → 9, polymorphic (business/investor targets) |
-| **New domains** | Offers (9 endpoints), Investments (4), Uploads (1), Verifications (4) |
-| **Events registry** | New `src/events/` folder — whitelist + validation |
-| **Utils** | Added `retry.js`, `rateLimiter.js` |
-| **Middleware** | Added `upload.middleware.js` (Multer) |
-| **Error handler** | Now also catches Multer errors (413, 415) |
-| **Tests** | 82 → ~524 across 39 files |
-| **Test harness** | Added `mongodb-memory-server` — real Mongo behavior without external dependency |
-| **Env vars** | Added `CLOUDINARY_*` and `GEMINI_API_KEY` |
-| **§11 trace** | Replaced the register trace with the verification pipeline — the most complex request in the system |
+Redis config exists but is only used for the match feed cache. `cacheGet`, `cacheSet`, and `cacheDel` wrap the client. If Redis is down, the wrappers swallow errors and return null — the feed still works, it's just slower.

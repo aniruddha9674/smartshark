@@ -1,422 +1,238 @@
-
 # Overview
 
-Architecture of the SmartShark backend — what the system is, how it's layered, and why each choice was made.
+What SmartShark is, how the backend is organized, and why the pieces are the way they are.
 
-**Read next:** [database.md](./database.md) for schema, [logic.md](./logic.md) for request flow.
+Read [database.md](./database.md) for the schema and [logic.md](./logic.md) for how requests flow.
 
----
+## 1. What this is
 
-## 1. What This Is
+SmartShark is a Virtual Shark Tank. Businesses pitch for investment. Investors browse, match, and make offers. Deals close inside the platform.
 
-SmartShark is a Virtual Shark Tank platform — a marketplace where **businesses pitch for investment** and **investors browse, match, and make offers**.
+There are two dashboards but one backend. A business owner builds a profile, gets a readiness score, publishes pitches, and receives offers. An investor browses matched businesses, shortlists the ones worth following up, chats with founders, and makes offers. Both dashboards share the same auth, notifications, chat, and matching engine — the difference is which screens load by default after login.
 
-Two dashboards, one backend:
+Capabilities overlap more than you'd expect. A user can own a business and invest in others at the same time. That's not a bug — it's a design decision that came up early and shaped the whole permission model (see §6).
 
-| Dashboard | User role | What they do |
-|---|---|---|
-| **Business Owner** | `business` | Build a profile, get a readiness score, publish pitches, receive offers |
-| **Investor** | `investor` | Browse matched businesses, shortlist, chat, make offers |
+Status: everything through verification and offers is done. Readiness scoring exists as a rule-based scorer, not the ML model yet. AI pitch assistant is next.
 
-Both dashboards share auth, notifications, chat, and the matching engine.
+## 2. Shape of the system
 
-**Status:** Auth complete. Profiles, pitches, offers, and matching in progress.
-
----
-
-## 2. Architecture at a Glance
+Three tiers: a React client, an Express API, and two databases.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                       CLIENT (React)                         │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            │ HTTPS + JWT + cookies
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    EXPRESS API (monolith)                    │
-│                                                              │
-│   routes → middleware → controllers → services → models     │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-     ┌─────────────────┐         ┌─────────────────┐
-     │    Postgres     │         │    MongoDB      │
-     │    (Neon)       │         │    (Atlas)      │
-     │                 │         │                 │
-     │  14 tables      │         │  Verification   │
-     │  All relational │         │  documents      │
-     └─────────────────┘         └─────────────────┘
+client (React)
+    │  HTTPS, JWT bearer tokens, httpOnly cookies
+    ▼
+Express API (single deployable process)
+    │
+    ├── Postgres (Neon)   ← relational data, transactions, joins
+    └── MongoDB (Atlas)   ← verification documents, OCR output
 ```
 
-Three-tier system: client, API, data. The API is a **modular monolith** — one deployable unit, internally split into clear layers.
+The API is a modular monolith. One process, one deploy, internally split into five layers that only depend downward. It's not microservices, and it shouldn't be until there's a specific service with a wildly different scaling profile that justifies the extra operational cost.
 
-See [logic.md §2](./logic.md#2-request-lifecycle) for the full request pipeline.
+## 3. Layers
 
----
+Both the code and the data follow the same dependency stack — identity at the base, communication at the top, everything referencing downward.
 
-## 3. The Five Layers
-
-Both the codebase and the data model follow the same five-layer structure.
-
-| # | Layer | Code | Data |
-|---|---|---|---|
-| 1 | **Identity** | Auth service, middleware | `users`, `refresh_tokens` |
-| 2 | **Profiles** | Profile services | `business_profiles`, `investor_profiles` |
-| 3 | **Discovery** | Matching, follow, view services | `matches`, `follows`, `profile_views` |
-| 4 | **Domain** | Pitch, offer services | `pitches`, `offers` |
-| 5 | **Communication** | Chat, notification services | `conversations`, `messages`, `notifications` |
-
-Two cross-cutting concerns sit outside the layer stack:
-- **Analytics** — `readiness_scores`, `profile_edit_history`
-- **Verification** — MongoDB `Verification`
-
-**The rule:** a layer only depends on layers below it. Layer 4 (`pitches`) references Layer 1 (`users`) and Layer 2 (`business_profiles`), never the reverse.
-
-See [database.md §3 Table Catalog](./database.md#3-table-catalog) for the full layer breakdown.
-
----
-
-## 4. Data Stores
-
-Polyglot persistence — two databases, each doing what it's best at.
-
-| Store | Holds | Why |
+| Layer | Code | Data |
 |---|---|---|
-| **Postgres** | 14 relational tables — everything queried, joined, or transactionally updated | ACID, joins, indexes, transactions |
-| **MongoDB** | Verification documents — uploaded files, OCR output, review state | Schema-less, shape varies per document type |
+| Identity | Auth service, auth middleware | `users`, `refresh_tokens` |
+| Profiles | Business + investor profile services | `businesses`, `investor_profiles` |
+| Discovery | Match, follow, profile-view services | `matches`, `follows`, `profile_views` |
+| Communication | Conversation, message, notification services | `conversations`, `messages`, `notifications` |
+| Domain | Pitch, offer, investment services | `pitches`, `offers`, `investments` |
 
-### Why not one database?
+Two things sit outside the stack. Analytics tables (`readiness_scores`, `profile_edit_history`) are append-only history and get written by services in any layer. Verification lives in Mongo and has its own pipeline that touches both databases.
 
-**Mongo for everything:**
-- No joins → user enumeration, feed ranking, and profile completion all become multi-query disasters
-- No cross-collection transactions → accepting an offer + closing a pitch + creating an investment can't be atomic
-- The `matches` table alone joins 3 collections for one feed query
+The rule is simple: a layer references layers below it, never the reverse. A pitch (domain) points at a business (profiles) and a user (identity). Nothing in identity knows pitches exist.
 
-**Postgres for everything:**
-- OCR data has no fixed schema — different document types yield different fields
-- Would need a `jsonb` column that defeats the point of a relational schema
-- Verification has no relationships to anything else — it's a document store by nature
+## 4. Why two databases
 
-**Polyglot split:** Each store handles what it's actually good at. The boundary is a single model (`Verification`), linked by `userId`. No cross-DB joins, no dual writes in hot paths.
+Everything queried, joined, filtered, or updated transactionally lives in Postgres. Users, businesses, pitches, offers, investments, matches, conversations, notifications, events. That's the bulk of the system and it needs ACID, foreign keys, and indexes.
 
-See [database.md §2 Data Stores](./database.md#2-data-stores) and [§7 MongoDB](./database.md#7-mongodb).
+The exception is verification documents. When someone uploads an Udyam certificate, OCR extracts fields from it. When they upload a GST certificate, the shape of the extraction is completely different. Udyam gives you an enterprise name and a registration number. GST gives you a legal name, a GSTIN, a principal place of business, a date of liability, a business constitution. Shop Act is different again. There's no common schema. And there are no joins needed — you always fetch a verification by `businessId` or `userId`, and the relationship to Postgres is a single string field.
 
----
+Forcing that into Postgres would mean either a very wide sparse table or a `jsonb` column that defeats the point of having a relational schema. Mongo handles it naturally. Schema varies per document type, no migrations when a new document type gets added, and the data shape stays readable.
 
-## 5. Application Structure
+The boundary between the two stores is one model: `Verification`. Linked back to Postgres by `userId` and `businessId` string fields, enforced in the service layer. No cross-database joins anywhere, no dual writes in a hot path.
 
-**Modular monolith.** One Express app, one deploy, one process. Internally organized into clear layers.
+## 5. The monolith decision
 
-### 5.1 Why monolith (not microservices)
+One Express app, one deploy, one process.
 
-| Concern | Monolith | Microservices |
-|---|---|---|
-| **Deployment** | One process | N processes + orchestration |
-| **Transactions** | Native ACID | Distributed sagas |
-| **Local dev** | `npm run dev` | Docker Compose + service mesh |
-| **Latency** | In-process calls | Network hops |
-| **Team size it fits** | 1–20 devs | 50+ devs |
+Microservices would add deployment orchestration, distributed tracing, and sagas in place of local transactions. The pain they solve — coordinating independent deploys across separate teams — doesn't exist at this scale. And a deal acceptance in this system spans five tables. Doing that as a distributed saga instead of a single Postgres transaction would be a large regression in both correctness and complexity.
 
-At this scale, microservices would add overhead (deployment, tracing, distributed transactions) for **zero benefit**. The pain microservices solve — coordinating independent deploys across teams — doesn't exist yet.
+When to split: when a specific part of the system has a genuinely different scaling or runtime profile. Matching is compute-heavy and could run in a worker. Chat could move to WebSockets and become stateful. Notifications could batch through a queue. Those are candidates. Everything else stays in the monolith.
 
-**When to split:** when a specific service has a wildly different scaling profile (matching is compute-heavy, chat is WebSocket-heavy). Extract that one service. Keep the rest monolith.
-
-### 5.2 Internal structure
+### Internal structure
 
 ```
 server/src/
-├── config/           ← DB connections, env, Swagger spec
-├── models/           ← schema definitions (postgres/ + mongo/)
-├── routes/           ← URL → handler mapping
-├── middleware/       ← cross-cutting (auth, validation, errors)
-├── controllers/      ← HTTP layer
-├── services/         ← business logic
-├── validators/       ← request schemas
-├── utils/            ← pure helpers
-└── app.js            ← Express setup
-
+├── config/         DB connections, env, Cloudinary, Redis, Swagger
+├── models/         Drizzle tables + Mongoose schemas
+├── routes/         URL → handler mapping
+├── middleware/     auth, validation, uploads, errors
+├── controllers/    HTTP boundary
+├── services/       business logic
+├── validators/     Zod schemas
+├── events/         event type registry
+├── utils/          pure helpers
+└── app.js          Express setup
 ```
 
-**One rule:** dependencies point downward.
-```
-routes → controllers → services → models
-              │
-              └── middleware
-              └── validators
-              └── utils
-```
+Dependencies point down. Routes call controllers. Controllers call services. Services call models. Middleware, validators, and utils get called from anywhere but depend on nothing themselves.
 
+The two rules that matter most:
 
-Controllers never import `db`. Services never import `req`/`res`.
+Controllers never import the database client. If you're querying in a controller, you're in the wrong file.
+Services never import `req` or `res`. They take plain arguments and return plain data. This is what makes them testable without HTTP.
 
-See [logic.md §1 Code Layers](./logic.md#1-code-layers).
+### Stateless by design
 
-### 5.3 Stateless design
+The API process holds no session state in memory. Every request can be served by any instance, no sticky sessions needed.
 
-The API server holds **no session state in memory**. Every request can be handled by any instance.
+That works because auth is JWT-based — verified on every request from the token alone, no server-side session lookup. Refresh tokens live in Postgres, so any instance can revoke any session. The one exception is the in-memory rate limiter and the Redis cache; both are explicitly designed to move to a shared store when the platform runs on multiple instances, and neither is load-bearing for correctness.
 
-Why it works:
-- Auth uses JWTs — verified per request, no server-side session store
-- Refresh tokens live in Postgres — revocable from any instance
-- No sticky sessions needed → horizontal scaling is trivial
+## 6. Security
 
-See [§6 Security Model](#6-security-model) for the auth details.
+The auth layer is the security boundary. Once `requireAuth` runs, everything downstream trusts `req.user`. Services don't re-verify who you are, they verify what you own.
 
----
+### Tokens
 
-## 6. Security Model
+Access token is a 15-minute HS256 JWT signed with `JWT_SECRET`. It lives in client memory and travels in the `Authorization: Bearer` header. Short-lived because it's stateless — if stolen, the attacker has fifteen minutes and then it expires. Nothing can revoke it.
 
-The auth layer is the security boundary. Everything else trusts `req.user` after middleware runs.
+Refresh token is a 96-character opaque hex string. It lives in an httpOnly cookie (JavaScript can't read it) and is stored in Postgres as a SHA256 hash. Thirty-day lifetime. Revocable.
 
-### 6.1 Tokens
+The refresh token is what makes logout real. Without it, a stolen JWT stays valid until expiry — you have no way to invalidate it. With it, logout revokes the token in the database and the next refresh fails.
 
-| Token | Type | Lifetime | Stored | Transport |
-|---|---|---|---|---|
-| **Access** | JWT (HS256) | 15 min | Client memory | `Authorization: Bearer` |
-| **Refresh** | Opaque 96-char hex | 30 days | Postgres (hashed) | httpOnly cookie |
+### Rotation
 
-### 6.2 Why two tokens
+Every `/refresh` call does three things: marks the old refresh token row as revoked, inserts a new one, and returns a new access token with a new cookie. The old token is dead the moment it's used.
 
-- **Access token** — short-lived, stateless. If stolen, expires in 15 minutes.
-- **Refresh token** — long-lived, revocable. Stored hashed in DB, checked on every refresh.
+That's also theft detection. If a stolen refresh token gets used, the legitimate user's next refresh fails because their token was already rotated by the attacker. The failure is a signal — the token was compromised, log the user out everywhere and require re-authentication.
 
-The refresh token is what makes **logout real**. Without it, a stolen JWT would be valid until expiry.
-
-### 6.3 Rotation
-
-Every `/refresh` call:
-1. Revokes the old refresh token in DB
-2. Inserts a new one
-3. Returns a new access token + new cookie
-
-**Theft detection:** if a stolen token is reused, the legitimate user's next refresh fails. That failure signal means the token was compromised.
-
-### 6.4 Defense summary
+### What each defense protects against
 
 | Threat | Defense |
 |---|---|
-| Password leak | bcrypt with 12 rounds |
-| DB leak | Passwords hashed, refresh tokens hashed |
-| XSS | Refresh token in httpOnly cookie, not accessible to JS |
+| Password leak | bcrypt with 12 salt rounds |
+| Database leak | Passwords and refresh tokens are both hashed |
+| XSS | Refresh token in httpOnly cookie, unreachable from JS |
 | CSRF | `SameSite=Strict` on the refresh cookie |
-| Token theft | 15-min access TTL + rotation on refresh |
-| User enumeration | Same error for "wrong email" and "wrong password" |
-| Privilege escalation | Zod strips unknown body fields; role enum disallows self-signup as admin |
+| Token theft | 15-minute access TTL, refresh rotation |
+| User enumeration | Same error message for wrong email and wrong password |
+| Privilege escalation | Zod strips unknown body fields, admin role disallowed at signup |
 | Banned user | `isActive` checked on every login and refresh |
+| Profile tampering | Ownership asserted in services, not just middleware |
 
-See [logic.md §6 Middleware](./logic.md#6-middleware) and [database.md §3.1 users](./database.md#31-users).
+### Why there's no `requireRole`
 
----
+An earlier version had role-based route guards. The multi-business refactor removed them entirely.
 
-## 7. Scaling Plan
+The reason is that roles don't capture what's actually being protected. A user can own a business and invest in others. On a route like "update this business", the role isn't what matters — what matters is whether this specific business belongs to this specific user. That's not a role, it's an ownership check.
 
-The system is designed to scale through infrastructure changes, not schema rewrites.
+So every business-scoped service call starts with `assertBusinessOwnership`. The check is small, it's reusable, and it works regardless of what else the user does on the platform. Role is still in the JWT because the frontend uses it to pick which sidebar to render, but no route or service gates on it.
 
-### 7.1 Four stages
+## 7. Scaling
 
-| Stage | Users | What changes | Schema changes? |
-|---|---|---|---|
-| **1. Vertical** | 0 → 10k | Bigger server, paid DB tiers | None |
-| **2. Horizontal** | 10k → 500k | N stateless API instances behind a load balancer | None |
-| **3. Data** | 500k → 5M | Read replicas, Redis cache, table partitioning | None |
-| **4. Service extraction** | 5M+ | Extract matching + notifications into separate services | None |
+The system scales through infrastructure changes, not schema rewrites. Foreign keys and indexes are already in place. There's no denormalization debt to pay down.
 
-**Why no schema changes:** indexes and foreign keys are already in place. Normalization is correct. No denormalization debt to pay down.
+Four rough stages:
 
-### 7.2 What breaks first
+Up to about 10k users, nothing changes — bigger server, paid database tiers, done.
 
-| Users | Bottleneck | Fix |
-|---|---|---|
-| 10k | Nothing | Nothing |
-| 50k | Neon connection limits | Enable pooler, reduce `max` in pool config |
-| 100k | Matching job runtime | Pre-filter by sector, run in a worker |
-| 500k | Feed query latency | Redis cache + read replica for `matches` |
-| 1M | Notification writes | Batch insert, queue via BullMQ |
-| 5M | Deploy time | Extract matching service |
+10k to 500k, add more instances of the stateless API behind a load balancer. Schema doesn't change. The rate limiter and feed cache need to move to Redis at this point, but that's a library swap, not a design change.
 
-None of these require touching the schema.
+500k to 5M, add read replicas for the read-heavy queries (feeds, match lists), enable Postgres partitioning on the high-volume tables (`events`, `feed_impressions`, `messages`), and lean harder on Redis.
 
-### 7.3 What's already scalable
+5M+, extract the parts with genuinely different profiles. Matching can run in a worker instead of on the request path. Notifications can batch through a queue. Chat can become a WebSocket service. None of these need schema changes — the data model already supports it.
 
-- **Stateless API** — no in-memory sessions
-- **UUID PKs** — sharding-ready
-- **Composite indexes** on every hot query
-- **Append-only tables** (`readiness_scores`, `profile_edit_history`, `messages`) — no lock contention
-- **Upsert pattern** for `matches`, `profile_views` — one row per pair, safe under concurrency
-- **Denormalized hot fields** (`valuation` on pitches, `sector` on readiness scores) — avoid joins on the hot path
+What breaks first, in order: Neon connection limits around 50k users, then match recompute runtime around 100k, then feed query latency around 500k, then notification write throughput around 1M. Each one has a straightforward fix that doesn't touch the schema.
 
-See [database.md §5 Indexes](./database.md#5-indexes).
+## 8. Tech stack
 
----
+Runtime is Node 22 with ESM. Framework is Express — minimal, mature, and there's no reason to reach for something heavier when the API is a thin layer over services.
 
-## 8. Tech Stack
+ORM is Drizzle. It's SQL-first, which matters because a lot of the queries here have specific shapes — joins with `innerJoin`, upserts with `onConflictDoUpdate`, partial indexes. An ORM that hides SQL would get in the way. Drizzle gets out of the way.
 
-### 8.1 Runtime + framework
+Postgres is Neon, connected via the `pg` driver. Not Neon's HTTP driver — that's for serverless functions. This is a long-running Express process that wants persistent TCP connections and a connection pool.
 
-| Layer | Choice | Why |
-|---|---|---|
-| **Runtime** | Node 22 (ESM) | Latest LTS, native ESM, top-level await |
-| **Framework** | Express | Minimal, huge ecosystem, well-understood |
-| **ORM** | Drizzle | SQL-first, TypeScript-native, lightweight |
+Mongo is Atlas, connected via Mongoose. Mongoose gives schema validation on documents even though Mongo doesn't require it — worth it for the fields we do know about, and it doesn't constrain the OCR data.
 
-### 8.2 Data
+Auth is bcrypt for passwords (12 rounds) and `jsonwebtoken` for access tokens. Symmetric HS256 is fine here because there's one issuer and one verifier. No key distribution problem.
 
-| Layer | Choice | Why |
-|---|---|---|
-| **Relational DB** | Postgres (Neon) | ACID, JSONB, best-in-class indexing |
-| **Postgres driver** | `pg` (node-postgres) | Standard for long-running servers; connection pooling |
-| **Document DB** | MongoDB (Atlas) | Schema-flexible for OCR data |
-| **Mongo driver** | Mongoose | Schemas + validation on documents |
+Validation is Zod. It's type-safe, it strips unknown fields by default, and the error messages are useful enough to send back to clients.
 
-### 8.3 Auth + validation
+Testing is Vitest with Supertest and PGlite. PGlite is Postgres compiled to WebAssembly — same SQL, in-memory, no Docker required in CI. Mongo tests use `mongodb-memory-server`, which gives real Mongoose behavior without an external service.
 
-| Layer | Choice | Why |
-|---|---|---|
-| **Password hashing** | bcrypt (12 rounds) | Battle-tested, intentionally slow |
-| **Access tokens** | jsonwebtoken (HS256) | Standard, symmetric, no key distribution |
-| **Request validation** | zod | Type-safe, strips unknown fields |
-| **Cookies** | cookie-parser | Standard Express middleware |
+API docs are generated from `@openapi` JSDoc blocks in route files and served through Swagger UI at `/docs`. The spec and the routes can't drift because they live in the same file.
 
-### 8.4 Testing + CI
+CI is GitHub Actions. Every push runs the full test suite.
 
-| Layer | Choice | Why |
-|---|---|---|
-| **Test runner** | Vitest | Fast, native ESM, Jest-compatible API |
-| **HTTP assertions** | Supertest | Drives the app without opening a port |
-| **Test Postgres** | PGlite | In-memory WASM Postgres — no Docker, no network |
-| **CI** | GitHub Actions | Free for public repos, tight GitHub integration |
-| **API docs** | `swagger-ui-express` + `swagger-jsdoc` | Code-first OpenAPI from JSDoc annotations |
+## 9. Deployment shape
 
-### 8.4.1 API Documentation
+The API needs a host that supports a long-running Node process — Render, Fly.io, Railway, anything in that family. Not serverless. Neon's HTTP driver is serverless-only and the API specifically doesn't use it.
 
-Live interactive docs served at `/docs`. Generated from `@openapi` JSDoc comments in every route file.
+The databases are already hosted (Neon for Postgres, Atlas for Mongo). Media goes to Cloudinary. The frontend can go to Vercel or Netlify.
 
-- **Spec:** OpenAPI 3.0
-- **UI:** Swagger UI
-- **Shared schemas:** 13 reusable component schemas
-- **Coverage:** 32 endpoints across 6 tags (Auth, Business Profile, Investor Profile, Pitches, Follows, Conversations)
-- **Try-it-out:** every endpoint executable from the browser
+The only piece that needs a decision is where the API runs, and the answer is "anything that keeps a process alive". No special requirements.
 
-Frontend team uses it as the contract. No Postman collections, no docs drift.
-
-### 8.5 Deployment (planned)
-
-| Layer | Candidate | Notes |
-|---|---|---|
-| **API host** | Render / Fly.io / Railway | Any supports a long-running Node process |
-| **Database** | Neon + Atlas | Already in use |
-| **Media storage** | Cloudinary or S3 | For pitch videos, decks, avatars |
-
-**Not serverless.** Neon's HTTP driver is for serverless functions. This API is a long-running server → `pg` driver + persistent process.
-
----
-
-## 9. Request Flow Summary
-
-A single API call passes through:
-
-```
-1. Express router           (matches path + method)
-2. Middleware chain         (validate, requireAuth, requireRole)
-3. Controller               (parses req, calls service)
-4. Service                  (business rules, DB queries)
-5. Models                   (Drizzle / Mongoose)
-6. Database                 (Postgres or MongoDB)
-```
-
-Full trace: [logic.md §10](./logic.md#10-end-to-end-example-post-apiauthregister) walks `POST /api/auth/register` through all 11 files it touches.
-
----
-
-## 10. Cross-References
+## 10. Cross-references
 
 | Question | Read |
 |---|---|
-| What tables exist? | [database.md §3](./database.md#3-table-catalog) |
-| How do tables relate? | [database.md §4](./database.md#4-relationships) |
-| How do requests flow? | [logic.md §2](./logic.md#2-request-lifecycle) |
+| What tables exist? | [database.md §4](./database.md#4-tables) |
+| How do tables relate? | [database.md §5](./database.md#5-relationships) |
+| How do requests flow? | [logic.md §2](./logic.md#2-what-happens-when-a-request-arrives) |
 | What does a controller do? | [logic.md §4](./logic.md#4-controllers) |
 | What does a service do? | [logic.md §5](./logic.md#5-services) |
-| How does auth work? | [logic.md §6](./logic.md#6-middleware) + [database.md §3.1](./database.md#31-users) |
-| End-to-end trace | [logic.md §10](./logic.md#10-end-to-end-example-post-apiauthregister) |
-| Testing approach | [logic.md §11](./logic.md#11-testing) |
-| Migration workflow | [database.md §8](./database.md#8-migration-workflow) |
-
----
+| How does auth work? | [logic.md §6](./logic.md#6-middleware) and [database.md §4](./database.md#4-tables) |
+| End-to-end trace | [logic.md §11](./logic.md#11-end-to-end-creating-a-verification) |
+| Testing | [logic.md §12](./logic.md#12-testing) |
+| Migrations | [database.md §9](./database.md#9-migrations) |
 
 ## 11. Roadmap
 
-Order matters — each step unblocks the next.
+Ordering matters. Each phase unblocks the next.
 
-| Phase | Feature | Depends on | Status |
-|---|---|---|---|
-| 1 | Auth | — | ✅ Complete |
-| 2 | Business + investor profiles | Auth | ✅ Complete |
-| 3 | Pitches | Profiles | ✅ Complete |
-| 4 | Follows + Conversations | Auth | ✅ Complete |
-| 5 | Matching (rule-based) | Profiles + pitches | ⏳ Next |
-| 6 | Offers | Pitches | ⏳ |
-| 7 | Verification (Mongo ↔ Postgres) | Profiles | ⏳ |
-| 8 | Readiness scoring (ML) | Profiles + history data | ⏳ |
-| 9 | AI pitch assistant | Pitches + LLM | ⏳ |
+| Phase | Feature | Status |
+|---|---|---|
+| 1 | Auth | Done |
+| 2 | Business + investor profiles | Done |
+| 3 | Pitches | Done |
+| 4 | Follows + conversations | Done |
+| 5 | Matching (rule-based) | Done |
+| 6 | Offers | Done |
+| 7 | Verification pipeline (Mongo + Postgres, format validators) | Done |
+| 8 | Readiness scoring | Rules-based, ML pending |
+| 9 | Search + fuzzy business discovery | Done |
+| 10 | Admin verification review queue | Backend done, UI pending |
+| 11 | AI pitch assistant | Next |
+| 12 | Trust Model Phase B (registry checks) | Future |
 
-**Why this order:**
-- Profiles gate everything — feeds, matching, and pitches all need completed profiles
-- Matching needs profiles + pitches to score against
-- Offers need pitches to bid on
-- Chat needs matches to initiate
+The order isn't arbitrary. Profiles gate everything — feeds, matching, and pitches all need completed profiles. Matching needs profiles and pitches to score against. Offers need pitches to bid on. Chat needs matches to start. There's no way to skip a step without rework.
 
-No step can be skipped without rework. Each phase is designed to be independently shippable and testable.
+## 12. Principles that shaped this
 
----
+These are the rules that came up repeatedly and ended up baked into the code.
 
-## 12. Design Principles
+**Identity is stable, extensions are separate.** One users table, one row per human. Business data and investor data live in extension tables that reference `users.id`. Every foreign key in the system either points at `users.id` or at a row that eventually does.
 
-The rules that shaped every decision above.
+**Layer dependencies point downward.** Routes to controllers to services to models. Controllers don't query. Services don't touch HTTP. When you're looking for a bug, the layer tells you what kind of bug it is.
 
-1. **Stable identity, role extensions.** One `users` table, one row per human. Role data lives in extension tables. Every FK points to `users.id`, never to a profile.
+**State is mutable, history is append-only.** Current values live in one row that gets updated. History lives in a table that only ever gets inserted into. Messages, events, readiness scores, profile edits, feed impressions — all append-only. Users, businesses, pitches, offers — all mutable. Never mix the two patterns.
 
-2. **Layer dependencies point down.** Routes → controllers → services → models. Controllers don't query. Services don't touch HTTP.
+**Denormalize only what's on a hot path.** Valuation on pitches, `businessId` on offers, sector on readiness scores, `lastMessageAt` on conversations. All computed on write so the read side doesn't have to. Everything else stays normalized because normalizing is free until it isn't.
 
-3. **Events vs state.** Append-only tables for history (`messages`, `readiness_scores`, `profile_edit_history`). Mutable rows for current state (`users`, `profiles`). Never mix.
+**Enforce at the lowest layer that can express the rule.** Uniqueness, referential integrity, and check constraints in the database. Shape validation in Zod. Business rules in services. Controllers do nothing but route. Self-follows are a database check because SQL can express them cheaply and it catches application bugs.
 
-4. **Denormalize for the hot path only.** `valuation` on pitches, `sector` on readiness_scores, `businessId` on offers — computed on write, queried without joins. Everything else stays normalized.
+**Stateless servers, stateful tokens.** JWTs prove identity. Refresh tokens live in Postgres. Servers hold no session state, so horizontal scaling costs nothing beyond adding instances.
 
-5. **Enforce at the lowest layer.** Constraints (unique, check, FK) live in the DB. Validation lives in zod. Business rules live in services. Controllers do nothing but route.
+**Test behavior, not implementation.** Endpoint tests hit real HTTP. Unit tests cover pure logic. Nothing tests internal function calls unless there's no other way to check the behavior. The test suite is meant to catch regressions, not document what the code does.
 
-6. **Stateless servers, stateful tokens.** JWTs prove identity. Refresh tokens live in Postgres. Servers hold no session state → horizontal scaling is free.
+**Version everything that evolves.** Scores and matches have `modelVersion` so a change in scoring doesn't corrupt historical comparisons. Events have `schemaVersion`. Migrations are committed. Sessions rotate. Any query over historical data can be filtered by the version of the code that wrote it.
 
-7. **Test behavior, not implementation.** Endpoint tests hit real HTTP. Unit tests cover pure logic. Nothing tests internal calls.
+**Don't optimize before measuring.** The system scales through infrastructure, not rewrites. Redis gets added when feed latency hurts, not before. Services get extracted when the deploy gets slow, not because it seems like the right time.
 
-8. **Version everything that evolves.** `modelVersion` on scores and matches. Migrations for schema. Refresh rotation for sessions.
-
-9. **Don't optimize before measuring.** The system scales through infrastructure, not rewrites. Add Redis when feed latency hurts. Extract services when the monolith deploy is slow. Not before.
-
-10. **Document decisions, not tutorials.** This doc explains *why*. Code comments explain *what*. README explains *how to run*.
-
----
-
-*Last updated: 2026-09-15*
-```
-
----
-
-## How the three files fit together
-
-```
-README.md         ← what it is, how to run, quick links
-    │
-    ├── overview.md        ← architecture story (this file)
-    │       │
-    │       └── links down to detail
-    │
-    ├── database.md        ← schema deep dive
-    │       └── §3 tables, §4 relationships, §5 indexes
-    │
-    └── logic.md           ← code deep dive
-            └── §3 routes, §5 services, §10 end-to-end trace
-```
+**Docs explain decisions, not tutorials.** The database doc explains why the schema looks the way it does. The logic doc explains how a request flows. The code explains what each function does. The README explains how to run it. Each layer of documentation has a job, and none of them duplicate the others.
 

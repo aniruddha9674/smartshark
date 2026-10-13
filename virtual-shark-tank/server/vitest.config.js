@@ -4,6 +4,7 @@ process.env.CLOUDINARY_API_KEY ||= "000000000000000";
 process.env.CLOUDINARY_API_SECRET ||= "ci-dummy-secret";
 export default defineConfig({
   test: {
+  
     globals: true,
     environment: "node",
     setupFiles: ["./tests/setup.js"],
