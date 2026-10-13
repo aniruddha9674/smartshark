@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, afterEach } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { drizzle } from "drizzle-orm/pglite";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,10 +11,12 @@ import * as schema from "../src/models/postgres/index.js";
 process.env.CLOUDINARY_CLOUD_NAME ||= "ci-dummy";
 process.env.CLOUDINARY_API_KEY ||= "000000000000000";
 process.env.CLOUDINARY_API_SECRET ||= "ci-dummy-secret";
+
 // ═══════════════════════════════════════════════════════════════
-// POSTGRES — in-memory via PGlite
+// POSTGRES — created at import time so global.__testDb is ready
+// before any test file grabs it. Never closed (workers may reuse).
 // ═══════════════════════════════════════════════════════════════
-const pgClient = new PGlite();
+const pgClient = new PGlite({ extensions: { pg_trgm } });
 await pgClient.exec("CREATE EXTENSION IF NOT EXISTS pg_trgm");
 
 const drizzleDir = path.resolve("drizzle");
@@ -58,11 +61,9 @@ afterEach(async () => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// TEARDOWN
-// ═══════════════════════════════════════════════════════════════
 afterAll(async () => {
-  await pgClient.close();
+  // NOTE: pgClient is intentionally NOT closed here.
+  // Vitest may reuse the worker across files; closing it breaks the next file.
   await mongoose.disconnect();
   if (mongoServer) await mongoServer.stop();
 });

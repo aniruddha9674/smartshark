@@ -533,11 +533,7 @@ export const getMyOffers = async (investorId, { limit = 20, offset = 0 } = {}) =
     .limit(limit)
     .offset(offset);
 
-  return rows.map((r) => ({
-    ...r.offer,
-    pitch: r.pitch,
-    business: r.business,
-  }));
+ return { offers: rows };
 };
 
 export const getReceivedOffers =async (businessId, userId, { limit = 20, offset = 0 } = {}) => {
@@ -561,11 +557,7 @@ export const getReceivedOffers =async (businessId, userId, { limit = 20, offset 
     .limit(limit)
     .offset(offset);
 
-  return rows.map((r) => ({
-    ...r.offer,
-    pitch: r.pitch,
-    investor: r.investor,
-  }));
+  return { offers: rows };
 };
 
 export const getOfferThread = async (anyOfferId, userId) => {
