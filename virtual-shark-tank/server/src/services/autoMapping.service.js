@@ -1,6 +1,6 @@
 import { proposeMapping } from "./columnMatcher.service.js";
 import { inferTransform } from "./transformInferrer.service.js";
-import { mapUnmappedColumns } from "./llmColumnMatcher.service.js";
+import * as llmMatcher from "./llmColumnMatcher.service.js";
 
 /**
  * Full proposal: fuzzy match first, LLM for the rest.
@@ -47,7 +47,7 @@ export const proposeFullMapping = async (
   }
 
  const unmappedCols = mappings
-  .filter((m) => !m.field && m.score >= 0.3)
+  .filter((m) => !m.field)
   .map((m) => ({
     source: m.source,
     sampleValues: sampleValues[m.source] || [],
@@ -64,7 +64,7 @@ export const proposeFullMapping = async (
 
   let llmResults = [];
   try {
-    llmResults = await mapUnmappedColumns(unmappedCols);
+    llmResults = await llmMatcher.mapUnmappedColumns(unmappedCols);
     stats.llmUsed = true;
     stats.llmProcessed = unmappedCols.length;
   } catch (err) {
