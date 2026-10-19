@@ -26,9 +26,13 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: virtual-shark-tank/server/package-lock.json
+      - name: Pin npm to 11
+        run: npm install -g npm@11
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
+        env:
+          MONGOMS_DISABLE_POSTINSTALL: '1'
 
       - name: Run domain discovery
         env:
