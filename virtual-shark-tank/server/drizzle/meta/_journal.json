@@ -71,6 +71,20 @@
       "when": 1791835594430,
       "tag": "0009_moaning_the_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793551984558,
+      "tag": "0010_simple_stark_industries",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793553143919,
+      "tag": "0011_complex_cassandra_nova",
+      "breakpoints": true
     }
   ]
 }

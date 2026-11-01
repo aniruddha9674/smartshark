@@ -35,3 +35,4 @@ export * from "./importBatch.model.js";
 export * from "./rawImportBusiness.model.js";
 
 export * from "./harmonizationError.model.js";
+export * from "./businessExtensions.model.js";

@@ -1,42 +1,34 @@
-import { runJob } from "../src/cli/runJob.js";
-import { PGlite } from "@electric-sql/pglite";
-import fs from "node:fs";
-import path from "node:path";
+import dotenv from "dotenv";
+dotenv.config();
 
-runJob("check-schema", async () => {
-  // This one is special — it uses PGlite, not the real DB.
-  // It bypasses pool.end() (harmless — pool was never connected).
-  process.env.NODE_ENV = "test";
+import { db, pool } from "../src/config/db.postgres.js";
+import { sql } from "drizzle-orm";
 
-  const pg = new PGlite();
-  const dir = path.resolve("drizzle");
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+const q = async (label, query) => {
+  console.log(`\n=== ${label} ===`);
+  const r = await db.execute(query);
+  console.table(r.rows);
+};
 
-  for (const f of files) {
-    const text = fs.readFileSync(path.join(dir, f), "utf-8");
-    for (const stmt of text.split("--> statement-breakpoint")) {
-      const t = stmt.trim();
-      if (!t) continue;
-      try {
-        await pg.exec(t);
-      } catch (e) {
-        if (!e.message?.includes("already exists")) throw e;
-      }
-    }
-  }
-
-  const { rows: columns } = await pg.query(
-    "SELECT column_name FROM information_schema.columns WHERE table_name = 'businesses' ORDER BY column_name"
+const run = async () => {
+  await q(
+    "businesses columns",
+    sql`SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns
+        WHERE table_name = 'businesses'
+          AND column_name IN ('owner_id','cin','nic_code','company_status','registered_address','sector','city','state','pincode','authorized_capital','paid_up_capital','incorporation_date','data_source','is_external','listing_status','company_class','company_category','company_sub_category','industrial_classification','country','company_name')
+        ORDER BY column_name`
   );
-  console.log("\n=== businesses columns ===");
-  console.log(columns.map((c) => `  - ${c.column_name}`).join("\n"));
 
-  const { rows: tables } = await pg.query(
-    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
+  await q(
+    "raw_mca_records exists?",
+    sql`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'raw_mca_records') AS exists`
   );
-  console.log("\n=== tables ===");
-  console.log(tables.map((t) => `  - ${t.table_name}`).join("\n"));
 
-  await pg.close();
-  return { tables: tables.length, columns: columns.length };
+  await pool.end();
+};
+
+run().catch((err) => {
+  console.error("Failed:", err);
+  process.exit(1);
 });

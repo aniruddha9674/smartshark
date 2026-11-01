@@ -7,8 +7,8 @@ import Portfolio from "./investor/Portfolio";
 import Messages from "./Messages";
 import Notifications from "./Notifications";
 import MyBusinesses from "./business/MyBusinesses";
-import InvestorBusinessDetail from "./investor/BusinessDetail";
 import BusinessProfile from "./business/BusinessDetail";
+import BusinessDetail from "./investor/CompanyProfile";
 import Matches from "./business/Matches";
 import OffersReceived from "./business/OffersReceived";
 
@@ -94,7 +94,7 @@ export default function Dashboard() {
           <Routes>
             <Route path="/" element={<DashboardHome user={user} caps={caps} />} />
 
-            {/* Investor-only listing routes — guarded */}
+            {/* ─── Investor-only listing routes (guarded) ─── */}
             <Route
               path="/feed"
               element={isInvestor ? <Feed /> : <Navigate to="/dashboard" replace />}
@@ -112,7 +112,7 @@ export default function Dashboard() {
               element={isInvestor ? <Portfolio /> : <Navigate to="/dashboard" replace />}
             />
 
-            {/* Business-only listing routes — guarded */}
+            {/* ─── Business-only listing routes (guarded) ─── */}
             <Route
               path="/businesses"
               element={hasBusiness ? <MyBusinesses /> : <Navigate to="/dashboard" replace />}
@@ -126,17 +126,21 @@ export default function Dashboard() {
               element={hasBusiness ? <OffersReceived /> : <Navigate to="/dashboard" replace />}
             />
 
-            {/* Detail routes — NOT guarded. Ownership is enforced server-side.
-                If the user can't access the resource, the component shows an error. */}
-            <Route path="/match/:matchId" element={<InvestorBusinessDetail />} />
-            <Route path="/browse/:businessId" element={<InvestorBusinessDetail />} />
+            {/* ─── Detail routes (unguarded; server enforces ownership) ─── */}
+            {/* All three render the same merged component. */}
+            {/* /match shows shortlist/pass + "why this matched"; /browse and /company don't. */}
+            <Route path="/match/:matchId" element={<BusinessDetail />} />
+            <Route path="/browse/:businessId" element={<BusinessDetail />} />
+            <Route path="/company/:businessId" element={<BusinessDetail />} />
+
+            {/* Owner-editable profile (separate component) */}
             <Route path="/businesses/:businessId" element={<BusinessProfile />} />
 
-            {/* Shared */}
+            {/* ─── Shared ─── */}
             <Route path="/messages" element={<Messages />} />
             <Route path="/notifications" element={<Notifications />} />
 
-            {/* Catch-all — must be last */}
+            {/* ─── Catch-all (must be last) ─── */}
             <Route
               path="*"
               element={<div className="text-zinc-500">Coming soon.</div>}

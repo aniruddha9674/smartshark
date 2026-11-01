@@ -50,3 +50,8 @@ export const getPublic = async (req, res) => {
   const business = await businessService.getPublicBusiness(req.params.id);
   res.json({ business });
 };
+
+export const getCompanyProfile = async (req, res) => {
+  const profile = await businessService.getCompanyProfile(req.params.id);
+  res.json(profile);
+};

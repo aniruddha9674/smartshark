@@ -6,6 +6,13 @@ import {
 } from "../models/postgres/index.js";
 import { ApiError } from "../utils/apiError.js";
 import { REQUIRED_PROFILE_FIELDS } from "../validators/businessProfile.validator.js";
+import {
+ 
+  businessMedia,
+  businessDirectors,
+  businessCharges,
+  businessEvidenceClaims,
+} from "../models/postgres/index.js";
 
 // ---- Field type hints for the audit log ----
 const FIELD_TYPES = {
@@ -158,4 +165,36 @@ export const getPublicBusiness = async (id) => {
   // Strip fields an investor shouldn't see
   const { ownerId, ...safe } = business;
   return safe;
+};
+
+/**
+ * Full profile for the investor-facing view.
+ * Returns the business + parsed provenance + extension tables.
+ * No ownership check — any authenticated user can view a company profile.
+ */
+export const getCompanyProfile = async (businessId) => {
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+
+  if (!business) throw ApiError.notFound("Business not found");
+
+  // Extension tables — safe to Promise.all, all small
+  const [media, directors, charges, claims] = await Promise.all([
+    db.select().from(businessMedia).where(eq(businessMedia.businessId, businessId)).orderBy(businessMedia.displayOrder),
+    db.select().from(businessDirectors).where(eq(businessDirectors.businessId, businessId)),
+    db.select().from(businessCharges).where(eq(businessCharges.businessId, businessId)),
+    db.select().from(businessEvidenceClaims).where(eq(businessEvidenceClaims.businessId, businessId)),
+  ]);
+
+  return {
+    business,
+    provenance: business.fieldProvenance || {},
+    media,
+    directors,
+    charges,
+    claims,
+  };
 };

@@ -232,4 +232,6 @@ router.post("/:id/complete", asyncHandler(businessController.complete));
  */
 router.get("/:id/history", asyncHandler(businessController.getHistory));
 
+router.get("/:id/profile", asyncHandler(businessController.getCompanyProfile));
+
 export default router;
