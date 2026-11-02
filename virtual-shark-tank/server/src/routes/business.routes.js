@@ -230,6 +230,7 @@ router.post("/:id/complete", asyncHandler(businessController.complete));
  *       404:
  *         description: Business not found
  */
+router.get("/:id/brief", asyncHandler(businessController.getInvestorBrief));
 router.get("/:id/history", asyncHandler(businessController.getHistory));
 
 router.get("/:id/profile", asyncHandler(businessController.getCompanyProfile));

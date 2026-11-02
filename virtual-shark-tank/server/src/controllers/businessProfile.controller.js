@@ -1,4 +1,5 @@
 import * as businessService from "../services/businessProfile.service.js";
+import * as investorBriefService from "../services/investorBrief.service.js";
 
 // GET /api/businesses — list all businesses I own
 export const listMine = async (req, res) => {
@@ -54,4 +55,23 @@ export const getPublic = async (req, res) => {
 export const getCompanyProfile = async (req, res) => {
   const profile = await businessService.getCompanyProfile(req.params.id);
   res.json(profile);
+};
+
+export const getInvestorBrief = async (req, res) => {
+  const result = await investorBriefService.getBrief(req.params.id, {
+    forceRegenerate: req.query.regenerate === "true",
+  });
+  if (result.error === "not_found") {
+    return res.status(404).json({ error: "Business not found" });
+  }
+  if (result.error === "insufficient_data") {
+    return res.json({ brief: null, reason: "insufficient_data" });
+  }
+  if (result.error === "generation_failed") {
+  return res.status(503).json({
+    error: "Brief generation failed",
+    detail: process.env.NODE_ENV !== "production" ? result.detail : undefined,
+  });
+}
+  res.json(result);
 };

@@ -1,16 +1,3 @@
-Quick check for #2 before I write:
-
-```powershell
-cd C:\Users\Admin\Documents\SmartShark\virtual-shark-tank\server
-Select-String -Path src\services\*.js,src\controllers\*.js -Pattern "MatchExplanation|matchExplanation"
-```
-
-If it prints nothing, the model is dead code parked for a future feature. I'll note it that way in the doc rather than pretending it's live.
-
-Here's the rewritten file. Save as `docs/database.md` (or wherever the old one lives). Plain voice, no callout formatting, no "Why the design:" labels.
-
----
-
 # Database
 
 How data is stored in SmartShark. Two databases, why each one, and what lives where.
@@ -39,21 +26,23 @@ Driver is `pg` (node-postgres) with connection pooling. The pooled endpoint come
 
 We use `pg` and not Neon's HTTP driver because the API is a long-running Express server. HTTP is for serverless functions. Persistent TCP is what you want here.
 
+Neon's free tier suspends compute after 5 minutes idle. Long-running scripts that touch the DB after an idle gap need a warm-up retry loop (`SELECT 1` with a few retries before the main work). `ingest-mca.js` and `enrich-investable.js` both include this.
+
 ## 3. MongoDB
 
 Driver is Mongoose. Connection string is `MONGO_URI`. The connection is opened lazily by `server.js` rather than at import time, so tests can boot the app without touching Atlas.
 
 ## 4. Tables
 
-Ordered by dependency. Identity first, then profiles, then the discovery layer, then deals, then supporting tables.
+26 Postgres tables. Ordered by dependency: identity, profiles, discovery, communication, domain, analytics, events, ingestion support, enrichment.
 
 ### users
 
 The root identity table. Every other foreign key in the system points here or to a row that eventually points here.
 
-Columns you'll actually touch: `id` (uuid primary key), `name`, `email` (unique), `passwordHash` (bcrypt, twelve rounds, never returned by any endpoint), `role` (business, investor, or admin), `isVerified`, `isActive`, `isProfileComplete`, and a set of notification preferences (`notifyNewMatch`, `notifyNewMessage`, `notifyFollow`, `notifyProfileUpdate`, `notifyScoreChange`, `notifyVerification`) that are all booleans defaulting to true. Plus `avatarUrl`, `language`, `theme`, and the usual timestamps.
+Columns you'll actually touch: `id` (uuid primary key), `name`, `email` (unique), `passwordHash` (bcrypt, twelve rounds, never returned by any endpoint), `role` (business, investor, or admin), `isVerified`, `isActive`, `isProfileComplete`, and a set of notification preferences that are all booleans defaulting to true. Plus `avatarUrl`, `language`, `theme`, and the usual timestamps.
 
-The design decision worth calling out: there's only one user table. Both dashboards share it, both use the same login endpoint, and both get the same JWT shape. Role determines which dashboard loads by default, but it doesn't gate routes — see the ownership pattern below. A user can be an investor and own a business at the same time and the system handles it without special cases.
+The design decision worth calling out: there's only one user table. Both dashboards share it, both use the same login endpoint, and both get the same JWT shape. Role determines which dashboard loads by default, but it doesn't gate routes. A user can be an investor and own a business at the same time and the system handles it without special cases.
 
 Settings live inline instead of in a separate table. Ten boolean-ish fields don't justify a join.
 
@@ -71,25 +60,77 @@ File: `refreshToken.model.js`.
 
 ### businesses
 
-A business owned by a user. There's no one-per-user constraint — a user can own as many as they want.
+**The central table. Grew from ~20 columns to 72 across four logical groups. This is the most important schema change since the last doc.**
 
-`ownerId` references users and cascades on delete. It is deliberately not unique. The core profile fields are `companyName`, `sector`, `city`, `description`, `fundingAsk`, `yearsOperating`, and `websiteUrl`. There's a second group of columns that track verification state: `udyamNumber`, `gstNumber`, `shopActLicense`, and `verificationTier` (unverified, basic, or verified). The tier is computed from Mongo verification documents and mirrored here so feed queries and match scoring don't have to touch Mongo.
+`ownerId` references users and cascades on delete. **It is now NULLABLE.** MCA-imported businesses have `ownerId = NULL` until a user claims them through `POST /api/businesses/:id/claim`. This is the multi-business + claim-business model.
 
-The import pipeline added a third group: `isExternal`, `sourceBatchId`, `sourceRowId`, `enrichmentStatus`, `enrichedAt`, `logoUrl`, `coverImageUrl`. These track whether the row came from a CSV import rather than a real signup, and where it came from. `sourceBatchId` and `sourceRowId` reference the import tables.
+**Group 1 — MCA source columns (added for ingestion):**
 
-Indexes are on `ownerId` (for "my businesses"), `sector` (for feed filtering), `verificationTier`, `isExternal`, `enrichmentStatus`, `sourceBatchId`, plus a GIN trigram index on the concatenation of `companyName`, `sector`, `city`, and `description` for fuzzy search.
+| Column | Type | Notes |
+|---|---|---|
+| `cin` | varchar(21) | unique index, nullable for user-created businesses |
+| `companyRoc` | varchar(100) | ROC Bangalore, etc. |
+| `companyCategory` | varchar(100) | Company limited by shares |
+| `companySubCategory` | varchar(100) | Non-government company |
+| `companyClass` | varchar(50) | Private / Public |
+| `companyStatus` | varchar(50) | Active / Strike Off / Amalgamated / etc. |
+| `listingStatus` | varchar(50) | Listed / Unlisted |
+| `authorizedCapital` | numeric | in rupees |
+| `paidUpCapital` | numeric | in rupees |
+| `incorporationDate` | date | |
+| `registeredAddress` | text | |
+| `country` | varchar(100) | |
+| `nicCode` | varchar(10) | industrial classification code |
+| `industrialClassification` | varchar(255) | human-readable sector from MCA |
+| `state` | varchar(100) | |
+| `pincode` | varchar(10) | |
+| `dataSource` | varchar(30) | `user` or `mca` |
 
-That trigram index is worth explaining. Business search is backed by Postgres `pg_trgm` — the `similarity()` and `word_similarity()` functions score how close a query string is to the concatenated fields, and the GIN index makes the candidate lookup fast without a sequential scan. It also means typos still match. `incorbiss` finds `Incorbiss`, `incor` finds it, `software` finds every SaaS company. Full text search with `tsvector` would also work but trigram is simpler to reason about and handles partial words better.
+**Group 2 — profile enrichment (owner-provided or curated):**
 
-File: `businessProfile.model.js`. (The file name is legacy — the table is `businesses`.)
+`tagline` (300), `businessModel` (100), `targetMarket` (200), `differentiation` (text), `keyProducts` (jsonb array), `notableClients` (jsonb array), `competitors` (jsonb array), `employeeCount` (int), `employeeCountSource` (varchar 30).
+
+**Group 3 — funding and traction:**
+
+`fundingInstrument` (enum: equity, debt, revenue_share, hybrid), `useOfFunds` (jsonb array of `{category, pct, description}`), `plannedMilestones` (jsonb array of `{months, milestone}`), `priorFunding` (jsonb array), `existingLoans` (jsonb array).
+
+`revenueRange` (varchar 50), `revenueSource` (varchar 30), `revenueTrendBracket` (enum: declining, flat, growing_20, growing_50, growing_100), `customerCount` (int), `repeatCustomerPct` (numeric), `monthlyOrderVolume` (int).
+
+**Group 4 — provenance, compliance, caching:**
+
+| Column | Purpose |
+|---|---|
+| `badges` | jsonb array — `well_known`, `listed`, `mnc_subsidiary`, `large_enterprise` |
+| `curatedNote` | editorial commentary for flagship profiles |
+| `fieldProvenance` | jsonb per-field trust: `{field: {source, tier, updated}}` |
+| `profileCompletenessPct` | integer 0-100 |
+| `currentReadinessScore` | integer 0-100, cached from readiness_scores |
+| `investorBrief` | jsonb, cached LLM summary |
+| `investorBriefGeneratedAt` | timestamp |
+| `logoCheckedAt` | timestamp, for idempotent logo enrichment re-runs |
+| `licenses` | jsonb array of `{name, status}` |
+| `selfDeclaredRisks` | text |
+| `litigationNotes` | text |
+| `linkedinUrl`, `twitterUrl`, `pitchVideoUrl` | varchar(500) |
+
+**Verification fields (unchanged):** `udyamNumber`, `gstNumber`, `shopActLicense`, `verificationTier` (unverified/basic/verified).
+
+**Indexes:**
+- `businesses_cin_unique` (unique, where cin is not null)
+- `businesses_owner_idx` on ownerId
+- `businesses_state_idx`, `businesses_nic_idx`, `businesses_status_idx`, `businesses_data_source_idx`
+- `businesses_badges_gin_idx` GIN on badges jsonb
+- `business_search_trgm_idx` — GIN trigram on concatenation of companyName, sector, city, description (for fuzzy search)
+
+File: `businessProfile.model.js`. The file name is legacy — the table is `businesses`.
 
 ### investor_profiles
 
 Investor-specific fields. Strictly one per user.
 
-`userId` is unique and cascades. The columns are `panNumber`, `firmName`, `investmentFocus` (a comma-separated sector list), `preferredGeography`, `minTicketSize`, `maxTicketSize`, `isIdentityVerified`.
+`userId` is unique and cascades. The columns are `panNumber`, `firmName`, `investmentFocus` (comma-separated sector list), `preferredGeography`, `minTicketSize`, `maxTicketSize`, `isIdentityVerified`.
 
-`investmentFocus` and `preferredGeography` are varchar rather than a join table. That's a deliberate simplification — the sectors are a small fixed list, the geographies are cities, and joins on a comma-separated string aren't needed anywhere in the matching scorer. If the platform ever grows to thousands of distinct sectors this becomes wrong. It won't.
+`investmentFocus` and `preferredGeography` are varchar rather than a join table. That's a deliberate simplification — the sectors are a small fixed list, the geographies are cities, and joins on a comma-separated string aren't needed anywhere in the matching scorer.
 
 File: `investorProfile.model.js`.
 
@@ -97,17 +138,15 @@ File: `investorProfile.model.js`.
 
 Polymorphic follow. An investor can follow a business, a business can follow an investor. Both directions live in the same table.
 
-`followerId` and `followingId` both reference users and both cascade. There's a unique index on the pair so you can't follow twice, a reverse index on `followingId` so "who follows me" doesn't scan, and a check constraint that stops self-follows at the database level. That last one has saved us from an application bug at least once.
+`followerId` and `followingId` both reference users and both cascade. Unique index on the pair, reverse index on `followingId`, check constraint stopping self-follows.
 
 File: `following.model.js`.
 
 ### notifications
 
-Per-user notification inbox. Cross-cutting — every other service eventually writes here.
+Per-user notification inbox. Cross-cutting.
 
-`userId` is the recipient and cascades. `actorId` is who triggered it and uses `set null` so deleting a user doesn't wipe the notification history. `type` is an enum (new_match, new_message, follow, profile_update, score_change, verification_update, saved_business_activity, system). `title` is pre-rendered. `body` is optional. `metadata` is jsonb holding whatever the specific type needs — match IDs, pitch IDs, whatever.
-
-Two indexes matter: `(userId, createdAt)` for the main feed query, `(userId, isRead)` for the unread badge. Both are used on every page load.
+`userId` cascades. `actorId` uses `set null`. `type` is an enum. `title`, `body`, `metadata` (jsonb). Indexes on `(userId, createdAt)` and `(userId, isRead)`.
 
 The notification service respects the user's `notify*` preferences before inserting. It also swallows its own errors — a failed notification never fails the parent operation.
 
@@ -117,31 +156,27 @@ File: `notification.model.js`.
 
 One row per chat thread. One thread per user pair, forever.
 
-The clever bit is that participants are stored as an ordered pair. `participantAId` is always the lower UUID, `participantBId` the higher, and there's a check constraint enforcing it. That means (X, Y) and (Y, X) collapse into the same row without any normalization logic in the service. A unique index on the pair plus the ordering makes double-creation impossible.
-
-`lastMessageAt` is denormalized so the chat list can sort by activity without joining messages.
+Participants are stored as an ordered pair. `participantAId` is always the lower UUID, `participantBId` the higher, with a check constraint enforcing it. `(X, Y)` and `(Y, X)` collapse into the same row. `lastMessageAt` is denormalized for fast chat-list sorting.
 
 File: `conversation.model.js`.
 
 ### messages
 
-Chat messages. Append-only — you never update a row, you only insert.
+Chat messages. Append-only.
 
-`conversationId` cascades from conversations. `senderId` references users. `body` is the text. `isRead` and `readAt` track per-message read state.
+`conversationId` cascades. `senderId` references users. `body` is text. `isRead` and `readAt` track read state.
 
-Two indexes: `(conversationId, createdAt)` for loading a thread, `(conversationId, isRead)` for unread counts.
+Indexes on `(conversationId, createdAt)` for thread load and `(conversationId, isRead)` for unread counts.
 
-Rate limit is 500 messages per user per day, enforced in the service layer, not the database.
+Rate limit: 500 messages per user per day, enforced in the service layer.
 
 File: `messages.model.js`.
 
 ### profile_views
 
-Tracks who viewed whom. One row per viewer/viewed pair, upserted.
+Tracks who viewed whom. Upsert — one row per viewer/viewed pair.
 
-`viewerId` and `viewedId` both reference users. `viewCount` increments on repeat views. `lastViewedAt` updates. Check constraint prevents self-views.
-
-This is an upsert rather than append-only. If it were append-only, a hundred people refreshing each other's profiles would balloon the table with no analytical value. The upsert keeps it small while still supporting "recently viewed" queries via the `(viewerId, lastViewedAt)` index.
+`viewCount` increments on repeat views. Check constraint prevents self-views.
 
 File: `profileViews.model.js`.
 
@@ -149,11 +184,9 @@ File: `profileViews.model.js`.
 
 Business readiness score history. Append-only — every recompute is a new row.
 
-`businessId` cascades. `score` is 0 to 100. `modelVersion` marks which scoring engine produced the row. `shapBreakdown` is jsonb holding per-feature contributions in the shape `[{ feature, value, contribution }]`. `suggestions` is jsonb holding an array of improvement strings. `sector` and `stage` are denormalized so the sector benchmark query doesn't need to join businesses.
+`businessId` cascades. `score` is 0 to 100. `modelVersion` marks which scoring engine produced the row. `shapBreakdown` is jsonb — currently holds the feature checklist (name is legacy from a planned SHAP integration). `suggestions` is jsonb array of improvement strings. `sector` and `stage` are denormalized for benchmark queries.
 
-Because it's append-only, the trend chart is free — just fetch rows ordered by `computedAt`.
-
-The `modelVersion` field matters more than it looks. When the scoring model changes, old rows stay marked with the old version. You can compare rules-v1 against ml-v2 without ambiguity.
+**Currently populated by `readiness.service.js` (rules-v1)**, not ML. Every call to `recomputeReadiness` inserts a new row.
 
 File: `readinessScore.model.js`.
 
@@ -161,11 +194,11 @@ File: `readinessScore.model.js`.
 
 Algorithmic pairing of a business and an investor. One row per pair, upserted.
 
-`businessId` and `investorId` reference their respective tables and cascade. `matchScore` is 0 to 100. `matchReasons` is jsonb holding the per-factor breakdown — the shape is `[{ factor, weight, score, matched, detail }]` and it's what the UI uses to render the "why this matched" section. `modelVersion` marks the scorer. `status` is an enum (pending, viewed, shortlisted, passed, connected).
+`businessId` and `investorId` cascade. `matchScore` is 0-100. `matchReasons` is jsonb per-factor breakdown. `modelVersion` marks the scorer. `status` is an enum (pending, viewed, shortlisted, passed, connected).
 
-The scorer is rule-based. Five factors with fixed weights: sector (30), ticket size (25), geography (20), verification tier (15), readiness (10). The weights were chosen by hand and haven't been tuned against data yet. When we have enough behavioral signal to train a ranker, the scorer gets swapped out and `modelVersion` records the change.
+Rule-based scorer: five factors with fixed weights — sector (30), ticket size (25), geography (20), verification tier (15), readiness (10).
 
-Unique index on `(businessId, investorId)` so recompute is an upsert. Indexes on `(investorId, matchScore)` and `(businessId, matchScore)` for the two feed directions.
+Unique index on `(businessId, investorId)`. Indexes on `(investorId, matchScore)` and `(businessId, matchScore)` for both feed directions.
 
 File: `match.model.js`.
 
@@ -173,259 +206,400 @@ File: `match.model.js`.
 
 Audit trail of business profile changes. Append-only.
 
-`businessId` cascades. `editedById` uses `set null` for system-initiated edits like tier bumps. `fieldName`, `oldValue`, `newValue`, and `fieldType` describe one field change per row.
+One row per changed field, not per save. `editedById` uses `set null` for system-initiated edits. All values stored as text.
 
-This is one row per changed field, not one row per save. If a user updates three fields and hits save, that's three rows. The History tab reads them in reverse chronological order and doesn't have to parse a diff blob.
-
-All values are stored as text. Audit tables shouldn't care about types — the point is to reconstruct what changed, not to query against it.
-
-Writes happen inside the same Postgres transaction as the businesses update, so the audit and the state change are atomic.
+Writes happen inside the same Postgres transaction as the businesses update.
 
 File: `profileEditHistory.model.js`.
 
 ### pitches
 
-A business's formal ask for investment. Temporal — a business can publish many over time.
+A business's formal ask for investment. Temporal.
 
-`businessId` cascades. The content fields are `title`, `tagline`, `shortPitch`, `longSummary`, and `sectorSpecificFields` (jsonb, for whatever extras a given sector wants). Money fields are `askAmount`, `equityOffered`, and `valuation`. `valuation` is denormalized: it's `askAmount / (equityOffered / 100)` computed on write.
+`businessId` cascades. Content fields plus `sectorSpecificFields` (jsonb). Money fields: `askAmount`, `equityOffered`, `valuation` (denormalized as `askAmount / (equityOffered / 100)`). Media as URLs only. `status` moves through draft, live, closed, funded, withdrawn.
 
-Media is stored as URLs only — `videoUrl`, `pitchDeckUrl`, `coverImageUrl`. Files live in Cloudinary. The database never holds binaries.
-
-`status` moves through draft, live, closed, funded, withdrawn. `publishedAt` and `closedAt` record the transitions.
-
-Two check constraints: equity must be between 0 and 100 exclusive, ask amount must be positive.
-
-Only one live pitch per business at a time. That's enforced in the service, not the database — a partial unique index would work but the check is cheap enough at publish time.
+Two check constraints on equity range and positive ask. Only one live pitch per business at a time (enforced in service).
 
 File: `pitch.model.js`.
 
 ### offers
 
-An investor's bid on a pitch. Self-referencing, so counter-offer threads are just chains of rows.
+An investor's bid on a pitch. Self-referencing for counter threads.
 
-`pitchId` cascades. `investorId` and `businessId` identify the two parties. `initiatedById` records who created *this particular row* — which is how counter-offers work: either party can create a new row pointing back at the previous one via `parentOfferId`. That field uses `set null` so deleting a parent doesn't break the chain.
+`initiatedById` records who created *this particular row*. `parentOfferId` uses `set null`. `status` is pending, accepted, rejected, countered, withdrawn, or expired.
 
-Money fields: `amount`, `equityRequested`, `valuation` (denormalized). `conditions` is jsonb for custom terms. `message` is an optional note.
-
-`status` is pending, accepted, rejected, countered, withdrawn, or expired. Once a row hits a terminal status it's never updated again.
-
-Expiry uses lazy evaluation. There's no cron job scanning for expired offers. Every read or action checks `expiresAt` and marks the row expired if it's past. This is a small thing but it means the system doesn't need a scheduler, and the state is always correct when observed.
-
-Indexes: `(pitchId, status, createdAt)` for listing offers on a pitch, `(investorId, createdAt)` for "my offers", `(businessId, status)` for "offers received", plus `parentOfferId` for walking threads.
+Expiry uses lazy evaluation — every read checks `expiresAt` and marks expired if past. No cron.
 
 File: `offer.model.js`.
 
 ### investments
 
-A closed deal. Created when a business accepts an offer. Append-only.
+A closed deal. Append-only.
 
-`pitchId`, `offerId`, `investorId`, and `businessId` all reference their respective tables and cascade. `amount` is the funds committed, `equityTaken` is the percentage given up, `valuation` is denormalized at close. `status` is active, exited, or written_off. `investedAt` is when the offer was accepted.
-
-The important property is that this row is created inside the same Postgres transaction as the offer acceptance. Either the offer becomes accepted, siblings get rejected, the pitch gets funded, the investment row exists, and the conversation opens — or none of those things happen. There's no intermediate state where an offer looks accepted but the investment is missing.
-
-The `offerId` is unique per investment. One offer maps to exactly one investment.
+Created inside the same Postgres transaction as offer acceptance. `offerId` is unique per investment.
 
 File: `investment.model.js`.
 
 ### events
 
-Append-only activity log. Captures everything a user does, including actions against Mongo entities.
+Append-only activity log. Cross-entity, cross-database.
 
-`userId` uses `set null` — events must survive user deletion. `eventType` is a varchar validated against a registry in `src/events/registry.js`. `entityType` says what kind of thing the event is about. `entityId` is deliberately `varchar(255)` and deliberately not a foreign key, because it holds both Postgres UUIDs and Mongo ObjectIds. `metadata` is jsonb whose shape is documented per event type in the registry. `schemaVersion` bumps when the metadata shape changes for a given type.
+`userId` uses `set null`. `eventType` validated against `src/events/registry.js`. `entityId` is `varchar(255)` — NOT a foreign key, holds both UUIDs and Mongo ObjectIds. `metadata` is jsonb. `schemaVersion` bumps when shape changes.
 
-The registry is the interesting part. An insert only succeeds if the event type is registered. Unknown types don't throw — they get recorded to `rejected_events` and the caller moves on. That means adding a new event type requires a code change to the registry, not a migration, and the `rejected_events` table tells you which types the system is asking for.
+`eventService.log()` is fire-and-forget and never called inside a `db.transaction()`.
 
-Writing an event is fire-and-forget. `eventService.log()` swallows its own errors, and it's never called inside a `db.transaction()`. The second rule exists because PGlite — which tests use — deadlocks on nested connections. So events always write after the transaction commits.
-
-Registered types cover pitches, offers, follows, messages, auth, and verification. Full list in the registry.
-
-Indexes: `(userId, createdAt)`, `(entityType, entityId, createdAt)`, `(eventType, createdAt)`. Each one backs a specific query — "my events", "events on this entity", "all events of this type".
+Three indexes: `(userId, createdAt)`, `(entityType, entityId, createdAt)`, `(eventType, createdAt)`.
 
 File: `event.model.js`.
 
 ### feed_impressions
 
-Append-only log of which pitches appeared where in a feed. This is the position-bias training signal.
+Append-only log of which pitches appeared where in a feed. Position-bias training signal.
 
-`userId` and `pitchId` both cascade. `surface` is feed, search, or shortlist. `position` is the zero-indexed rank. `score` is the model score at impression time. `modelVersion` marks the scorer.
+`surface` is feed, search, or shortlist. `position` is zero-indexed rank. `score` is the model score at impression time. `modelVersion` marks the scorer.
 
-Kept separate from `events` because impressions are high volume — every feed render logs one row per pitch shown — and they're only queried for ML training, never for user-facing reads. Inserts go through `logBatch()` rather than one at a time.
-
-The combination of position, score, and model version is what makes the table useful. It lets you answer questions like "at what rank do users actually click?" and "did the last model change move clicks up or down?".
+Batch insert via `logBatch()`, not per-impression.
 
 File: `feedImpression.model.js`.
 
 ### rejected_events
 
-Every attempt to log an unregistered event type lands here. One row per distinct attempted type.
+Every attempt to log an unregistered event type lands here. One row per distinct attempted type, with a counter.
 
-`attemptedType` is unique. `count` increments on each repeat. `sampleUserId` uses `set null`. `firstSeenAt` and `lastSeenAt` track the window.
-
-This table is how the event registry stays honest. If `verification_approved` gets attempted two hundred times this week, that's the system saying it wants a registry entry. If something gets attempted once, it's probably a typo in a service call. A weekly query like this one gives you a prioritized list of missing registry entries:
-
-```sql
-SELECT attempted_type, count
-FROM rejected_events
-WHERE count > 100
-ORDER BY count DESC;
-```
+This table is how the event registry stays honest. Query `SELECT attempted_type, count FROM rejected_events WHERE count > 100 ORDER BY count DESC` weekly for prioritized list of missing registry entries.
 
 File: `rejectedEvent.model.js`.
 
-### import_batches
+### business_media
 
-Tracks each CSV import as one row.
+Product photos, premises, pitch video — the visual gallery on the investor profile.
 
-The columns are what you'd expect: `id`, `filename`, `rowCount`, `status`, and timestamps. Rows in `businesses` that came from an import link back here via `sourceBatchId`.
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `businessId` | uuid FK | cascade |
+| `url` | varchar(1000) | Cloudinary URL |
+| `publicId` | varchar(255) | for deletion |
+| `mediaType` | varchar(30) | product / premises / pitch_video / team |
+| `caption` | varchar(300) | nullable |
+| `displayOrder` | integer | default 0 |
+| `uploadedBy` | uuid FK → users.id | set null |
+| `createdAt` | timestamp | |
 
-### raw_import_businesses
+Indexes: `(businessId, displayOrder)` for ordering, `(mediaType)` for filtering.
 
-The raw parsed rows from an import, before transformation.
+### business_directors
 
-Every column from the source CSV is preserved as jsonb under `rawData`, plus `batchId` and `rowIndex` so you can trace a harmonized business back to the exact source row. `status` tracks whether a row has been processed yet.
+Directors from MCA21, extracted per-business.
 
-Keeping raw rows around costs nothing and means an import can be re-run against the same source without re-uploading. It's also how you debug a bad transform — you can diff the raw row against the harmonized business.
+`businessId` cascades. `din` (8 chars), `name`, `appointedAt`, `isActive`, `source` (default mca), `fetchedAt`. Unique constraint on `(businessId, din)` so re-fetching is idempotent.
 
-### harmonization_errors
+### business_charges
 
-Rows from an import that couldn't be harmonized into a business.
+Secured loans registered against the business (MCA charge filings).
 
-`batchId`, `rowIndex`, `errorMessage`, plus the raw data that failed. Anything here is a signal that the column matcher or the transform inferrer needs work.
+`businessId` cascades. `chargeId`, `holderName`, `amount`, `creationDate`, `status`, `source`, `fetchedAt`.
+
+### business_evidence_claims
+
+Revenue and other financial claims, with verification status. Turns "the owner says ₹5 Cr revenue" into "the owner says ₹5 Cr, and here's what we could independently confirm."
+
+`claimType` (revenue / employee_count / customer_count), `claimedValue`, `claimedPeriod`, `evidenceTier` (claimed / document_backed / gst_corroborated / multi_source_confirmed), `corroboratingSources` (jsonb), `discrepancyPct`, `lastCheckedAt`.
+
+**Status:** schema exists, no service writes to it yet. Table for Phase 2 of the trust model.
+
+### raw_mca_records
+
+Append-only store of the exact CSV row from `data.gov.in`, before transformation.
+
+`cin`, `contentHash` (SHA256 of canonical fields), `payload` (jsonb of full row), `stateFile`, `ingestedAt`. Unique constraint on `(cin, contentHash)` for idempotency.
+
+Every re-run of the ingest script inserts zero new raw rows (unless the source file changed, in which case the hash differs and a new row is inserted, preserving history).
+
+### import_batches / raw_import_businesses / harmonization_errors
+
+Legacy CSV import pipeline. Still present but superseded by the `data.gov.in` MCA bulk ingestion path.
+
+- `import_batches` — one row per CSV import
+- `raw_import_businesses` — raw parsed rows before transformation
+- `harmonization_errors` — rows that couldn't be harmonized
 
 ## 5. Relationships
 
-Foreign keys and what happens when the parent gets deleted.
+Cascade is the default for owned data — refresh tokens, businesses, pitches, offers, investments, messages, matches, readiness scores, profile edits, follows, notifications, impressions, business_media, business_directors, business_charges, business_evidence_claims.
 
-Cascade is the default for owned data — refresh tokens, businesses, pitches, offers, investments, messages, matches, readiness scores, profile edits, follows, notifications, impressions. Delete a user, everything they own goes with them.
+`set null` is for references that should survive. Notification actors, profile edit editors, event users, rejected event samples, offer parents.
 
-`set null` is for references that should survive. Notification actors, profile edit editors, event users, rejected event samples, offer parents. These represent history, and history shouldn't disappear because someone deactivated their account.
+`events.entityId` is not a foreign key at all — varchar holding either a UUID or Mongo ObjectId.
 
-One special case. `events.entityId` is not a foreign key at all. It's a varchar holding either a UUID or a Mongo ObjectId, and there's no referential integrity to enforce because the two databases can't have one.
-
-The multi-business relationship on `businesses.ownerId` is N:1 even though it started 1:1. That was a refactor about six weeks into the project. The old `business_profiles` table had a unique constraint; the new one doesn't. Every foreign key that used to point at a "business profile" now points at `businesses.id`.
+The multi-business relationship on `businesses.ownerId` is N:1 and now nullable (claimable).
 
 ## 6. Enums
 
-Postgres enums, all defined through Drizzle's `pgEnum`. Adding a value requires a migration — that's a cost, so the values are chosen to be stable.
+Postgres enums via Drizzle `pgEnum`. Adding a value requires a migration.
 
-`role`: business, investor, admin. On users.
-`verification_tier`: unverified, basic, verified. On businesses.
-`notification_type`: new_match, new_message, follow, profile_update, score_change, verification_update, saved_business_activity, system. On notifications.
-`match_status`: pending, viewed, shortlisted, passed, connected. On matches.
-`pitch_status`: draft, live, closed, funded, withdrawn. On pitches.
-`offer_status`: pending, accepted, rejected, countered, withdrawn, expired. On offers.
-`investment_status`: active, exited, written_off. On investments.
+- `role`: business, investor, admin. On users.
+- `verification_tier`: unverified, basic, verified. On businesses.
+- `notification_type`: new_match, new_message, follow, profile_update, score_change, verification_update, saved_business_activity, system. On notifications.
+- `match_status`: pending, viewed, shortlisted, passed, connected. On matches.
+- `pitch_status`: draft, live, closed, funded, withdrawn. On pitches.
+- `offer_status`: pending, accepted, rejected, countered, withdrawn, expired. On offers.
+- `investment_status`: active, exited, written_off. On investments.
+- **`funding_instrument`: equity, debt, revenue_share, hybrid.** On businesses.
+- **`revenue_trend`: declining, flat, growing_20, growing_50, growing_100.** On businesses.
 
-`events.eventType` is deliberately not an enum. New event types shouldn't require a migration — they're validated in the registry and rejected types go to `rejected_events`.
+`events.eventType` is deliberately not an enum — validated in the registry, rejected types go to `rejected_events`.
 
 ## 7. The verification pipeline
 
-This is the part of the system that doesn't work like the rest of it, so it gets its own section.
+A user uploads Udyam, GST, or Shop Act. The file goes to Cloudinary. The verification service creates a Mongo doc with status `pending` and calls the extraction service.
 
-A user uploads a document — Udyam, GST, or Shop Act. The file goes to Cloudinary and a Cloudinary URL comes back. Then the verification service creates a Mongo document with status `pending` and calls the extraction service.
+Extraction fetches the image, base64-encodes, sends to Gemini with per-document-type prompt. Config: `responseMimeType: "application/json"`, `temperature: 0.1`. Response is a map of field name to `{ value, confidence }`.
 
-Extraction fetches the image, base64-encodes it, and sends it to Gemini with a prompt specific to the document type. Gemini is configured with `responseMimeType: "application/json"` and a temperature of 0.1, so the response is strict JSON rather than prose with JSON in it. The response is a map of field name to `{ value, confidence }`.
+Format validation annotates each field with `formatValid` and `formatReason`:
+- GSTIN: 15-char format, state code 1-37, mod-36 checksum
+- Udyam: `UDYAM-XX-00-0000000` format, state code whitelist
+- PAN: format, 4th char holder type
+- Shop Act: length, character class
 
-Before that response gets stored, it goes through format validation. Each field with a known validator gets annotated with `formatValid` and `formatReason`.
-
-GSTIN validation checks the fifteen-character format, the state code (must be 1 to 37), and the checksum. The checksum is a mod-36 calculation over alternating position weights — the exact algorithm is in `formatValidator.service.js`.
-
-Udyam validation checks the format `UDYAM-XX-00-0000000` and that the state code is one of the real Indian state codes.
-
-PAN validation checks the format and that the fourth character is a valid holder type.
-
-Shop Act is looser — length and character class, no checksum.
-
-After annotation, the Mongo document gets a status. If Gemini says the wrong document was uploaded, status is `rejected`. If overall confidence is at least 0.7, status is `verified`. Otherwise `needs_review`.
+Document status: `rejected` if wrong document type, `verified` if confidence ≥ 0.7, `needs_review` otherwise.
 
 Nothing writes to the business profile yet. That's a separate user action called apply.
 
-When the user clicks apply, the service reads the OCR fields, merges them with any values the user has explicitly confirmed in the UI, and compares each against the current value on the business row.
+On apply: merge OCR fields with user-confirmed overrides, compare each against current value, write changes inside Postgres transaction (businesses + profile_edit_history), update Mongo with `appliedFields`, recompute tier.
 
-If the business field is empty, the new value gets written. If it's non-empty and differs, the value goes into a conflicts array and the existing value stays. The user sees the conflict and decides. If it's non-empty and the same, nothing happens.
+**Tier computation (the paper's core contribution):**
+- No verifications → unverified
+- 1+ verified docs with at least one distinct name → basic
+- 2+ verified docs where all extracted legal names collapse to a single unique value (lowercase + trim) → verified
 
-That write happens inside a Postgres transaction. The businesses row updates and one row per changed field goes into `profile_edit_history`. Both succeed or neither does.
+Two documents that verified successfully but disagree on legal name keep the tier at `basic`. Cross-document consistency is the signal.
 
-After the transaction, the Mongo verification gets `status = "verified"` and an `appliedFields` array listing what the user confirmed.
-
-Then the service recomputes the verification tier. It reads every verification for the business, extracts the company name from each based on the document type's field mapping (Udyam's `enterprise_name`, GST's `legal_name`, Shop Act's `establishment_name`), normalizes each to lowercase and trims, and counts unique values.
-
-No verifications gives unverified. One or more verified documents with at least one distinct name gives basic. Two or more verified documents where all names collapse to a single unique value gives verified.
-
-That last rule is the whole point. A business can upload both an Udyam and a GST certificate, and if the two documents disagree on the company name, the tier stays at basic. The system doesn't trust a document in isolation — it trusts agreement across documents. That's the cross-document consistency signal, and it's the paper's core contribution.
-
-If the tier changed, the businesses row updates and a `verification_tier_changed` event fires. Like all events, outside the transaction.
-
-Events fire at every stage: started, extracted, applied, tier changed, failed. None of them are inside a transaction, and none of them can fail the parent operation.
+Events fire at every stage, always after the transaction.
 
 ## 8. Indexes
 
 Rather than listing every one, here's what's indexed and why.
 
-Auth hits `users.email`. The unique index is what makes duplicate registration detection work.
+- **Auth:** `users.email` unique
+- **Investor feed:** `matches.(investorId, matchScore)` + `pitches.(status, publishedAt)`
+- **Business feed:** `matches.(businessId, matchScore)` + `offers.(businessId, status)`
+- **Chat:** `messages.(conversationId, createdAt)`, `(conversationId, isRead)`, both conversation participant columns
+- **History:** `profile_views.(viewerId, lastViewedAt)`, `profile_edit_history.(businessId, changedAt)`
+- **Notifications:** `(userId, createdAt)`, `(userId, isRead)`
+- **Benchmark:** `readiness_scores.(sector, computedAt)`
+- **Events:** `(userId, createdAt)`, `(entityType, entityId, createdAt)`, `(eventType, createdAt)`
+- **Impressions:** `(userId, createdAt)`, `(pitchId, createdAt)`
+- **Search:** `business_search_trgm_idx` GIN trigram on businesses
+- **Badges:** `businesses_badges_gin_idx` GIN on badges jsonb for `@>` queries
+- **Feed rank inputs:** `businesses_state_idx`, `businesses_nic_idx`, `businesses_status_idx`, `businesses_data_source_idx`
 
-The investor feed uses `matches.(investorId, matchScore)` plus `pitches.(status, publishedAt)`. The composite is ordered so the equality filter comes first and the sort comes second.
-
-The business feed uses `matches.(businessId, matchScore)` plus `offers.(businessId, status)`.
-
-Chat uses `messages.(conversationId, createdAt)` for thread loads and `(conversationId, isRead)` for unread counts, plus indexes on both conversation participant columns.
-
-History tabs use `profile_views.(viewerId, lastViewedAt)` and `profile_edit_history.(businessId, changedAt)`.
-
-Notifications use `(userId, createdAt)` and `(userId, isRead)`.
-
-The sector benchmark uses `readiness_scores.(sector, computedAt)`.
-
-Events have three indexes: `(userId, createdAt)`, `(entityType, entityId, createdAt)`, `(eventType, createdAt)`. Each one matches a query pattern in the event service.
-
-Impressions have `(userId, createdAt)` and `(pitchId, createdAt)`.
-
-Search uses the trigram GIN index on businesses.
-
-There's no index on `events.entityId` alone. It's always queried as part of the `(entityType, entityId)` pair.
+No index on `events.entityId` alone — always queried as part of `(entityType, entityId)`.
 
 ## 9. Migrations
 
-Migrations live in `server/drizzle/`, generated by Drizzle Kit, applied by `drizzle-kit migrate`.
+Migrations live in `server/drizzle/`, generated by Drizzle Kit.
 
-Workflow after editing a model file:
+**Current state: fragile.** The 0010 and 0011 SQL files were applied via a manual `pool.query()` loop (`scripts/apply-migration-0010.js` pattern), not `drizzle-kit migrate`, because Drizzle's SQL splitter doesn't handle the `DO $$ ... $$` blocks used to guard `CREATE TYPE IF NOT EXISTS`.
 
-```
-cd server
-npm run generate   # writes drizzle/NNNN_name.sql
-npm run migrate    # applies pending migrations
-```
+The schema is correct in Postgres. The `__drizzle_migrations` table may not reflect every applied file. **Future `npm run generate` runs should be audited before `npm run migrate`.**
 
-For development, `npm run push` will apply schema changes directly without generating a migration file. Faster but not versioned, so never use it on a branch that will be shared.
+Safest workflow for new migrations:
+1. Generate: `npm run generate`
+2. Open the SQL file
+3. Verify it contains only `CREATE TABLE` / `ALTER TABLE ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`
+4. If it contains `DO $$` blocks, apply manually via the pool.query loop pattern
+5. Otherwise `npm run migrate`
 
-Tests read every `.sql` file in `drizzle/` in sorted order and apply them to a fresh PGlite instance. This means every migration must be committed. If a test fails with "relation does not exist", a migration file is missing from the repo.
-
-PGlite doesn't ship the `pg_trgm` extension in all versions, so the test setup loads it explicitly and the migration that creates the trigram index is skipped if the extension isn't available. In production, `pg_trgm` was enabled once manually on Neon and the index exists.
+Tests read every `.sql` file in `drizzle/` in sorted order into a fresh PGlite instance. PGlite doesn't ship `pg_trgm` in all versions — the harness loads it explicitly and skips the trigram index migration if unavailable. In production, `pg_trgm` was enabled once on Neon.
 
 ## 10. Rate limits
 
 Not database constraints. Enforced in the service layer.
 
-`send_message`: 500 per day per user.
-`new_conversation`: 50 per day per user.
-`gemini_extract`: 14 per minute, global — this one exists to stay under Gemini's free tier of 15 requests per minute.
+- `send_message`: 500 per day per user
+- `new_conversation`: 50 per day per user
+- `gemini_extract`: 14 per minute, global (stays under Gemini free tier of 15 RPM)
 
-Implementation is an in-memory map with daily reset, and a sliding window for the Gemini case. Cleared on server restart, which is fine for a single-instance MVP.
+In-memory map with daily reset, sliding window for Gemini. Cleared on server restart.
 
-When the platform runs on multiple instances, the in-memory limits break — each instance would count independently. The migration path is Redis with `INCR` and `EXPIRE`. The service interface (`enforceLimit`, `checkLimit`) doesn't need to change.
+Migration path to Redis when multi-instance. Interface (`enforceLimit`, `checkLimit`) stays the same.
 
-## 11. Things that shaped the schema
+## 11. Data ingestion pipeline
 
-A few decisions that show up in more than one place.
+The pipeline that populates the 206,048 MCA businesses.
 
-Identity is stable and extensions are separate. There's one users table, one row per human. Business data and investor data live in extension tables. Every foreign key in the system points at `users.id` or at a row that references it, never at a profile.
+**Sources:** `data.gov.in` publishes per-state company master data (CSV, 16 columns). Goa was 15,897 rows; Karnataka was 263,365 rows. Ingestion is per-state and idempotent.
 
-Ownership is checked in the service layer, not with roles. A user can own businesses and invest at the same time. The check that matters is "does this business belong to this user?", which is why every business-scoped service starts with an ownership assertion and why there's no `requireRole` middleware anywhere.
+**Two tables:** `raw_mca_records` (append-only JSONB of exact CSV row) and `businesses` (canonical, upserted by CIN).
 
-State is mutable, history is append-only. Current values live in one row. History lives in a table you never update. Readiness scores, events, feed impressions, messages, and profile edits all follow this pattern. Users, businesses, pitches, and offers don't — those are current state.
+**Idempotency:** every row gets SHA256 hash of canonical fields (CIN, name, status, capital, address, listing status, NIC). Unique constraint on `(cin, contentHash)`.
 
-Denormalization is used for the hot path only. Valuations on pitches and offers, `businessId` on offers and investments, sector on readiness scores, `lastMessageAt` on conversations. All of these are computed on write so the read side doesn't have to. Anything not on a hot path stays normalized.
+**Filtering at ingest:**
+- LLPs excluded (LLPIN format doesn't match CIN regex) — 51,169 rows
+- Foreign F-codes excluded — 589 rows
+- Malformed CINs excluded — 12 rows
 
-Constraints are enforced where they're cheapest. Uniqueness and referential integrity in the database, shape validation in Zod, business rules in the service layer. Self-follows and self-views are database checks because they're cheap to express as SQL and they've caught application bugs.
+**Throughput measured:** row-by-row inserts ran at 12 rows/sec (22 min for 15,897 rows). Batched 250-row multi-INSERT runs at 269 rows/sec (59s for same file) — **22× speedup**.
 
-Everything that evolves is versioned. Scores and matches have `modelVersion`. Events have `schemaVersion`. Sessions rotate. The idea is that any query over historical data can be filtered by the version of the code that wrote it.
+**Scripts:** `scripts/ingest-mca.js`, `scripts/recompute-matches.js`.
+
+## 12. Enrichment pipeline
+
+Three enrichment phases, run manually (not scheduled).
+
+### 12.1 Template descriptions
+
+For every MCA business without an owner-written description, generate a deterministic template:
+
+> "{company_name} is a {class} company operating in the {sector} sector, based in {city}, {state}. Incorporated in {year}. Authorized capital: {capital}. Financial details and traction metrics have not been provided by the business owner."
+
+Written in batches of 200 rows per UPDATE. Ran on 13,266 investable businesses in ~45 seconds. Field provenance tagged `generated`.
+
+### 12.2 Wikidata bulk match
+
+Fetch all Indian business entities from Wikidata via SPARQL (four inception-year ranges + one no-inception batch), yielding 2,509 candidates. Match locally against MCA names after normalization (strip legal suffixes, lowercase, remove punctuation). Require year-of-incorporation agreement (±5 years) to prevent false positives.
+
+**Measured outcome:** 29 name matches, **15 pass the year check** (100% precision on manual inspection), 6 rejected by year mismatch (the false positives), 8 skipped for missing date on one side.
+
+**Why bulk-fetch:** per-company SPARQL would be ~13,540 round trips at 1 req/sec ≈ 3.8 hours. Bulk fetch is 5 queries in ~2 minutes. Match happens locally in ~10 seconds.
+
+### 12.3 Logo enrichment
+
+For businesses with `websiteUrl`, extract logo using this priority order:
+1. JSON-LD `Organization.logo` from homepage
+2. `<link rel="apple-touch-icon">`
+3. Largest `<link rel="icon">` by `sizes` attribute
+4. `og:image`
+5. Google favicon service (`google.com/s2/favicons?domain=X&sz=128`) as last resort
+
+Concurrency 15 via `p-limit`, 8s hard timeout, `logoCheckedAt` prevents re-fetching.
+
+**Measured distribution** across 2,870 logos: 502 (17.5%) full brand resolution from site structured data, 448 (15.6%) from Google favicon, 1,690 (58.9%) from DeBounce, 230 (8.0%) unverified.
+
+**Script:** `scripts/enrich-investable.js` with phases `descriptions`, `wikidata`, `logos`, `directors`.
+
+### 12.4 Domain discovery — negative result
+
+Seven free domain-discovery APIs tested. All failed:
+- Serper (paid): 403 Forbidden
+- DuckDuckGo HTML: rate-limited at 2 queries
+- Tavily (keyless): all returned `tracxn.com`
+- Clearout/Clearbit: 15% accuracy
+- Raw Wikidata: 0% due to strict P856 property match
+- Pipeworx raw: initials-guessing (`ANI Technologies → atp.com`)
+- Pipeworx + verification gate: 78.9% precision, 60% recall on 25-company sample
+
+**Free domain discovery is not viable at scale.** Paid provider or manual curation is required.
+
+## 13. Readiness scoring
+
+`readiness_scores` populated by a deterministic feature-checklist scorer, not ML.
+
+**Features (sum to 100 points):**
+- Profile basics (35): company name 5, sector 5, city 5, description 10, tagline 5, business model 5
+- Team (5): employee count
+- Funding (15): funding ask 5, funding instrument 5, use of funds breakdown 5
+- Traction (20): revenue range 10, customer count 5, revenue trend 5
+- Verification (15): verified document 10, basic document 5
+- Digital presence (10): website 5, logo 5
+
+**Service:** `src/services/readiness.service.js`. Persists each computation to `readiness_scores` with `modelVersion = "rules-v1"`. The `shapBreakdown` field holds the feature checklist (name is legacy from a planned SHAP integration).
+
+**Routes:**
+- `GET /api/businesses/:id/readiness`
+- `POST /api/businesses/:id/readiness/recompute`
+
+**Auto-recompute:** fires fire-and-forget after any business profile update.
+
+## 14. Investor brief (LLM-generated)
+
+A one-page summary generated from stored structured fields. Cached in `businesses.investorBrief` (jsonb) for 7 days.
+
+**Model:** `gemini-3.8-flash` with `responseMimeType: "application/json"`, temperature 0.2. **Gemini 2.5 Flash was retired 2026-10-20** — any reference to it in older docs is stale. Model name must be `gemini-3.8-flash`.
+
+**Prompt strategy:**
+- Explicit "only use facts in the data, never invent" instruction
+- Inject `whatsMissing` list so the model knows what *not* to write about
+- Strict JSON schema in the prompt (headline, what_they_do, traction, the_ask, risks)
+- Deterministic `whatsMissing` array appended after the LLM response
+
+**Known gaps (must fix before submission):**
+- No Zod schema validation on the LLM output. A malformed response could yield `undefined` fields in the UI.
+- No `withRetry` wrapper. Gemini 503 "high demand" errors surface as failures.
+
+**Routes:**
+- `GET /api/businesses/:id/brief`
+- `GET /api/businesses/:id/brief?regenerate=true`
+
+**Error handling:** 503 UNAVAILABLE from Gemini is transient (5-minute window typical). Retry or fall back to `gemini-3.5-flash`.
+
+## 15. Feed ranking
+
+The investor feed is sorted by a weighted scalar combining fame, match, and completeness — **not by match score alone**. Deliberate change: well-known businesses surface first regardless of match, while still reordering within a tier by relevance.
+
+**Formula:**
+rank = fame_base
+
+match_score × 10
+
+profile_completeness_pct × 5
+
+fame_base =
+100,000 if badges contains "well_known"
+50,000 if listing_status = "Listed"
+10,000 if authorized_capital ≥ 10,000 Cr
+5,000 if authorized_capital ≥ 1,000 Cr
+2,000 if authorized_capital ≥ 100 Cr
+0 otherwise
+
+text
+
+**Why this ordering:** every tier gap (min 2,000) exceeds the maximum possible match+completeness bonus (1,500). A 100%-match mid-size business cannot outrank a 0%-match famous business.
+
+**Implementation:** raw SQL in `getInvestorFeed` because `badges` and `curatedNote` aren't in the Drizzle model. Cache key prefixed `feed:v2:` to invalidate pre-ranking caches.
+
+**Recompute scope:** `recomputeForInvestor` includes MCA businesses (not just `isProfileComplete = true`):
+```sql
+is_profile_complete = true
+OR (
+  data_source = 'mca'
+  AND company_status = 'Active'
+  AND (
+    badges @> '["well_known"]'::jsonb
+    OR listing_status = 'Listed'
+    OR authorized_capital >= 10000000
+  )
+)
+Yields ~13,540 scored pairs per investor (vs ~5 previously).
+
+16. Current data state
+As of 2026-11-03:
+
+Metric	Value
+MCA businesses ingested	206,048
+Active	140,977
+Investable (₹1Cr+ / listed / well-known)	~13,540
+Template descriptions written	13,266
+Wikidata-verified websites	15
+Curated flagship profiles (seeded)	10
+Logos enriched	2,870
+Test files	47
+Tests	619
+HTTP endpoints	80+
+Relational tables	26
+Mongo collections	5 (1 used)
+17. Things that shaped the schema
+Identity is stable, extensions are separate. One users table, one row per human. Business and investor data live in extension tables. Every FK points at users.id or a row that eventually does.
+
+Ownership is checked in the service layer, not with roles. A user can own businesses and invest at the same time. Every business-scoped service starts with an ownership assertion. No requireRole middleware anywhere.
+
+State is mutable, history is append-only. Current values in one row. History in tables that only get inserts. Readiness scores, events, feed impressions, messages, profile edits, raw_mca_records all follow this pattern.
+
+Denormalization is used for the hot path only. Valuations, businessId on offers, sector on readiness scores, lastMessageAt on conversations.
+
+Constraints enforced where cheapest. Uniqueness and referential integrity in Postgres, shape validation in Zod, business rules in services.
+
+Everything that evolves is versioned. modelVersion on scores and matches. schemaVersion on events. Migrations committed. Sessions rotate.
+
+Provenance is first-class. fieldProvenance jsonb tracks per-field trust level (verified / document_backed / self_declared / scraped / generated). The provenance principle is applied uniformly: to the brief, to the badges, to the completeness score.

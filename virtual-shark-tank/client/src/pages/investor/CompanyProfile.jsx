@@ -5,6 +5,7 @@ import { useCompanyProfile } from "../../hooks/useCompanyProfile";
 import { useBusinessPitches } from "../../hooks/useBusinessPitches";
 import { api, getErrorMessage } from "../../lib/api";
 import MakeOfferModal from "../../components/MakeOfferModal";
+import InvestorBrief from "../../components/investor/InvestorBrief";
 
 const SECTOR_GRADIENT = {
   Manufacturing: "from-blue-900/50 via-blue-800/30 to-zinc-900",
@@ -23,6 +24,7 @@ const TIER_STYLE = {
   verified: { dot: "bg-emerald-400", label: "Verified", bg: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
   document_backed: { dot: "bg-blue-400", label: "Document", bg: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
   self_declared: { dot: "bg-amber-400", label: "Self-declared", bg: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
+  generated: { dot: "bg-zinc-500", label: "Auto-generated", bg: "bg-zinc-800 text-zinc-400 border-zinc-700" },
   scraped: { dot: "bg-zinc-500", label: "Scraped", bg: "bg-zinc-800 text-zinc-400 border-zinc-700" },
 };
 
@@ -106,7 +108,6 @@ export default function BusinessDetail() {
   const foundedYear = b.incorporation_date ? new Date(b.incorporation_date).getFullYear() : null;
   const completeness = b.profile_completeness_pct || 0;
 
-  // Camelcase adapter for MakeOfferModal (in case it expects that shape)
   const businessForModal = {
     id: b.id,
     companyName: b.company_name,
@@ -125,21 +126,21 @@ export default function BusinessDetail() {
       <div className={`relative rounded-2xl overflow-hidden mb-6 bg-gradient-to-br ${gradient}`}>
         <div className="h-40" />
         <div className="px-6 pb-6 -mt-12 flex items-end gap-5">
-        <div className="w-24 h-24 rounded-2xl bg-zinc-900 border-4 border-zinc-950 flex items-center justify-center text-3xl font-bold text-zinc-300 flex-shrink-0 overflow-hidden">
-  {b.logo_url ? (
-    <img
-      src={b.logo_url}
-      alt={b.company_name}
-      className="w-full h-full object-contain bg-white p-1.5"
-      onError={(e) => {
-        e.target.style.display = "none";
-        e.target.parentElement.innerHTML = `<span class="text-3xl font-bold text-zinc-300">${initials}</span>`;
-      }}
-    />
-  ) : (
-    initials
-  )}
-</div>
+          <div className="w-24 h-24 rounded-2xl bg-zinc-900 border-4 border-zinc-950 flex items-center justify-center text-3xl font-bold text-zinc-300 flex-shrink-0 overflow-hidden">
+            {b.logo_url ? (
+              <img
+                src={b.logo_url}
+                alt={b.company_name}
+                className="w-full h-full object-contain bg-white p-1.5"
+                onError={(e) => {
+                  e.target.style.display = "none";
+                  e.target.parentElement.innerHTML = `<span class="text-3xl font-bold text-zinc-300">${initials}</span>`;
+                }}
+              />
+            ) : (
+              initials
+            )}
+          </div>
           <div className="flex-1 pb-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-semibold text-zinc-100">{b.company_name}</h1>
@@ -234,6 +235,76 @@ export default function BusinessDetail() {
           />
         </div>
       </div>
+
+      {/* AI INVESTOR BRIEF */}
+      <div className="mb-6">
+        <InvestorBrief
+          businessId={b.id}
+          verificationTier={b.verification_tier}
+        />
+      </div>
+
+      {/* ACTIVE PITCH */}
+      <section className="mb-6">
+        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+          Active Pitch
+        </h2>
+        {pitchesLoading ? (
+          <div className="text-zinc-500 text-sm">Loading...</div>
+        ) : !pitches || pitches.length === 0 ? (
+          <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl text-sm text-zinc-500">
+            This business isn't currently raising.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {pitches.map((pitch) => (
+              <div key={pitch.id} className="p-6 bg-gradient-to-br from-brand/10 to-zinc-900 border border-brand/30 rounded-xl">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-zinc-100">{pitch.title}</h3>
+                    {pitch.tagline && (
+                      <p className="text-sm text-zinc-400 mt-1">{pitch.tagline}</p>
+                    )}
+                  </div>
+                  <span className="text-xs px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30 whitespace-nowrap">
+                    Live
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 mb-4 py-3 border-y border-zinc-800">
+                  <div>
+                    <div className="text-xs text-zinc-500 mb-0.5">Raising</div>
+                    <div className="text-lg font-semibold text-zinc-100">
+                      {formatINR(pitch.askAmount)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-zinc-500 mb-0.5">For</div>
+                    <div className="text-lg font-semibold text-zinc-100">
+                      {pitch.equityOffered}%
+                    </div>
+                  </div>
+                  {pitch.valuation && (
+                    <div>
+                      <div className="text-xs text-zinc-500 mb-0.5">Valuation</div>
+                      <div className="text-lg font-semibold text-zinc-100">
+                        {formatINR(pitch.valuation)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setOfferPitch(pitch)}
+                  className="w-full px-4 py-3 bg-brand hover:bg-brand-hover text-black rounded-lg font-semibold transition-colors"
+                >
+                  Make an offer →
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* READINESS */}
       {b.current_readiness_score != null && (
@@ -393,40 +464,6 @@ export default function BusinessDetail() {
         </Section>
       )}
 
-      {/* PITCHES */}
-      <section className="mb-6">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">Active Pitches</h2>
-        {pitchesLoading ? (
-          <div className="text-zinc-500 text-sm">Loading pitches...</div>
-        ) : !pitches || pitches.length === 0 ? (
-          <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl text-sm text-zinc-500">
-            This business hasn't published a pitch yet.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {pitches.map((pitch) => (
-              <div key={pitch.id} className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl">
-                <h3 className="font-medium text-zinc-100">{pitch.title}</h3>
-                {pitch.tagline && <p className="text-sm text-zinc-500 mt-1">{pitch.tagline}</p>}
-                <div className="flex items-center justify-between mt-4">
-                  <div className="text-sm">
-                    <span className="text-zinc-400">{formatINR(pitch.askAmount)}</span>
-                    <span className="text-zinc-600 mx-2">·</span>
-                    <span className="text-zinc-400">{pitch.equityOffered}% equity</span>
-                  </div>
-                  <button
-                    onClick={() => setOfferPitch(pitch)}
-                    className="px-3 py-1.5 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium"
-                  >
-                    Make offer
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
       {/* PROVENANCE LEGEND */}
       <div className="mt-8 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl text-xs text-zinc-500">
         <div className="font-semibold text-zinc-400 mb-2">What the badges mean</div>
@@ -434,6 +471,7 @@ export default function BusinessDetail() {
           <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> <span className="text-emerald-400">Verified</span> — Confirmed by a government registry</div>
           <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-400" /> <span className="text-blue-400">Document</span> — Extracted from an uploaded document</div>
           <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> <span className="text-amber-400">Self-declared</span> — Entered by the owner, not verified</div>
+          <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-zinc-500" /> <span className="text-zinc-400">Auto-generated</span> — Built from registry data</div>
           <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-zinc-500" /> <span className="text-zinc-400">Scraped</span> — Retrieved from the public web</div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { eq, and, ne, gte, desc, inArray,sql } from "drizzle-orm";
+import { eq, and, ne, gte, desc, inArray, sql, or } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
 import {
   businesses,
@@ -236,10 +236,23 @@ export const recomputeForInvestor = async (userId) => {
 
   if (!investor) throw ApiError.notFound("Investor profile not found");
 
-  const bizList = await db
-    .select()
-    .from(businesses)
-    .where(eq(businesses.isProfileComplete, true));
+  // Raw SQL — `badges` and `curated_note` aren't in the Drizzle model.
+  const result = await db.execute(sql`
+    SELECT *
+    FROM businesses
+    WHERE is_profile_complete = true
+       OR (
+         data_source = 'mca'
+         AND company_status = 'Active'
+         AND (
+           badges @> '["well_known"]'::jsonb
+           OR listing_status = 'Listed'
+           OR authorized_capital >= 10000000
+         )
+       )
+  `);
+
+  const bizList = result.rows;
 
   if (bizList.length === 0) {
     return { investorId: userId, matchedAgainst: 0 };
@@ -249,8 +262,17 @@ export const recomputeForInvestor = async (userId) => {
   const readinessMap = await getLatestReadinessBatch(businessIds);
 
   const rows = bizList.map((business) => {
+    // Convert snake_case raw row → camelCase for computeScore
+    const normalized = {
+      ...business,
+      fundingAsk: business.funding_ask,
+      verificationTier: business.verification_tier,
+      companyName: business.company_name,
+      sector: business.sector,
+      city: business.city,
+    };
     const readinessScore = readinessMap.get(business.id) ?? null;
-    const { score, reasons } = computeScore(investor, business, readinessScore);
+    const { score, reasons } = computeScore(investor, normalized, readinessScore);
     return {
       businessId: business.id,
       investorId: userId,
@@ -288,57 +310,84 @@ export const getInvestorFeed = async (
   userId,
   { minScore = 0, limit = 20, offset = 0 } = {}
 ) => {
-  const cacheKey = `feed:${userId}:${minScore}:${limit}:${offset}`;
+  const cacheKey = `feed:v2:${userId}:${minScore}:${limit}:${offset}`;
 
   const cached = await cacheGet(cacheKey);
   if (cached) return cached;
 
-  const rows = await db
-    .select({
-      match: matches,
-      business: {
-        id: businesses.id,
-        companyName: businesses.companyName,
-        sector: businesses.sector,
-        city: businesses.city,
-        description: businesses.description,
-        fundingAsk: businesses.fundingAsk,
-        yearsOperating: businesses.yearsOperating,
-        verificationTier: businesses.verificationTier,
-        logoUrl: businesses.logoUrl,
-        coverImageUrl: businesses.coverImageUrl,
-        isExternal: businesses.isExternal,
-        websiteUrl: businesses.websiteUrl,
-      },
-    })
-    .from(matches)
-    .innerJoin(businesses, eq(businesses.id, matches.businessId))
-    .where(
-      and(
-        eq(matches.investorId, userId),
-        ne(matches.status, "passed"),
-        gte(matches.matchScore, minScore)
-      )
-    )
-    .orderBy(desc(matches.matchScore))
-    .limit(limit)
-    .offset(offset);
+  // Raw SQL — bypasses the Drizzle model for `badges`/`curated_note`.
+  const result = await db.execute(sql`
+    SELECT
+      m.id AS m_id,
+      m.business_id, m.investor_id, m.match_score, m.match_reasons,
+      m.model_version, m.status, m.created_at AS m_created_at,
+      b.id AS b_id, b.company_name, b.sector, b.city, b.description,
+      b.funding_ask, b.years_operating, b.verification_tier,
+      b.logo_url, b.cover_image_url, b.is_external, b.website_url,
+      b.badges, b.listing_status, b.authorized_capital,
+      b.company_status, b.profile_completeness_pct, b.curated_note,
+      (
+        CASE
+          WHEN b.badges @> '["well_known"]'::jsonb THEN 100000
+          WHEN b.listing_status = 'Listed' THEN 50000
+          WHEN b.authorized_capital >= 100000000000 THEN 10000
+          WHEN b.authorized_capital >= 1000000000 THEN 5000
+          WHEN b.authorized_capital >= 100000000 THEN 2000
+          ELSE 0
+        END
+        + COALESCE(m.match_score, 0) * 10
+        + COALESCE(b.profile_completeness_pct, 0) * 5
+      ) AS feed_rank
+    FROM matches m
+    JOIN businesses b ON b.id = m.business_id
+    WHERE m.investor_id = ${userId}
+      AND m.status != 'passed'
+      AND m.match_score >= ${minScore}
+    ORDER BY feed_rank DESC, m.match_score DESC
+    LIMIT ${limit}
+    OFFSET ${offset}
+  `);
 
   const readinessMap = await getLatestReadinessBatch(
-    rows.map((r) => r.match.businessId)
+    result.rows.map((r) => r.business_id)
   );
 
-  const feed = rows.map((r) => ({
-    ...r.match,
-    business: r.business,
-    readinessScore: readinessMap.get(r.match.businessId) ?? null,
+  const feed = result.rows.map((r) => ({
+    id: r.m_id,
+    businessId: r.business_id,
+    investorId: r.investor_id,
+    matchScore: r.match_score,
+    matchReasons: r.match_reasons,
+    modelVersion: r.model_version,
+    status: r.status,
+    createdAt: r.m_created_at,
+    business: {
+      id: r.b_id,
+      companyName: r.company_name,
+      sector: r.sector,
+      city: r.city,
+      description: r.description,
+      fundingAsk: r.funding_ask,
+      yearsOperating: r.years_operating,
+      verificationTier: r.verification_tier,
+      logoUrl: r.logo_url,
+      coverImageUrl: r.cover_image_url,
+      isExternal: r.is_external,
+      websiteUrl: r.website_url,
+      badges: r.badges,
+      listingStatus: r.listing_status,
+      authorizedCapital: r.authorized_capital,
+      companyStatus: r.company_status,
+      profileCompletenessPct: r.profile_completeness_pct,
+      curatedNote: r.curated_note,
+    },
+    readinessScore: readinessMap.get(r.business_id) ?? null,
   }));
 
   await cacheSet(cacheKey, feed, 300);
 
   return feed;
 };
-
 export const getBusinessFeed = async (businessId, userId, { minScore = 0, limit = 20, offset = 0 } = {}) => {
   await assertBusinessOwnership(businessId, userId);
 
@@ -430,7 +479,7 @@ export const shortlistMatch = async (matchId, userId) => {
     .where(eq(matches.id, matchId))
     .returning();
 
-  await cacheDel(`feed:${userId}:*`);
+  await cacheDel(`feed:v2:${userId}:*`);
 
   return updated;
 };
