@@ -36,3 +36,5 @@ export * from "./rawImportBusiness.model.js";
 
 export * from "./harmonizationError.model.js";
 export * from "./businessExtensions.model.js";
+
+export * from "./profileDraft.model.js";

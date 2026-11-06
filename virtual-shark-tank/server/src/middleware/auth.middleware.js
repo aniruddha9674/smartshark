@@ -6,6 +6,20 @@ import { businesses, investorProfiles } from "../models/postgres/index.js";
 
 // ---------- Auth ----------
 export const requireAuth = (req, res, next) => {
+
+  if (
+  process.env.NODE_ENV !== "production" &&
+  process.env.DEV_BYPASS_AUTH === "true" &&
+  req.headers["x-dev-user-id"]
+) {
+  req.user = {
+    id: req.headers["x-dev-user-id"],
+    role: "admin",     // synthesized — no DB column
+    isAdmin: true,     // matches DB reality
+  };
+  return next();
+}
+
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
     return next(ApiError.unauthorized("No token provided"));

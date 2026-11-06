@@ -11,6 +11,7 @@ import * as schema from "../src/models/postgres/index.js";
 process.env.CLOUDINARY_CLOUD_NAME ||= "ci-dummy";
 process.env.CLOUDINARY_API_KEY ||= "000000000000000";
 process.env.CLOUDINARY_API_SECRET ||= "ci-dummy-secret";
+process.env.GEMINI_API_KEY ||= "test-dummy-key";
 
 // ═══════════════════════════════════════════════════════════════
 // POSTGRES — created at import time so global.__testDb is ready

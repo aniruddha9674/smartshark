@@ -26,4 +26,7 @@ export const env = {
   accessTokenTtl: "15m",
   refreshTokenTtlDays: 30,
   redisUrl: process.env.REDIS_URL || null,
+   geminiApiKey: process.env.GEMINI_API_KEY,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  devBypassAuth: process.env.DEV_BYPASS_AUTH === "true",
 };

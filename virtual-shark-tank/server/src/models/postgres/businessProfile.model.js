@@ -131,6 +131,13 @@ export const businesses = pgTable(
     // ─── Cached readiness score ───────────────────────────────
     currentReadinessScore: integer("current_readiness_score"),
 
+        // ─── Badges, editorial, cached LLM brief ──────────────────
+    badges: jsonb("badges").default([]),
+    curatedNote: text("curated_note"),
+    logoCheckedAt: timestamp("logo_checked_at"),
+    investorBrief: jsonb("investor_brief"),
+    investorBriefGeneratedAt: timestamp("investor_brief_generated_at"),
+
     // ─── Provenance (per-field trust) ─────────────────────────
     // shape: { "authorizedCapital": { "source": "mca", "tier": "verified", "updated": "2026-10-20" } }
     fieldProvenance: jsonb("field_provenance").default({}),

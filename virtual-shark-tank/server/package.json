@@ -10,13 +10,15 @@
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",
-    "studio": "drizzle-kit studio"
+    "studio": "drizzle-kit studio",
+    "worker": "node src/worker.js",
+    "dev:all": "concurrently \"npm:dev\" \"npm:worker\""
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@google/genai": "^2.28.0",
+    "@google/genai": "^2.32.0",
     "@neondatabase/serverless": "^1.1.0",
     "axios": "^1.7.2",
     "bcrypt": "^6.0.0",
@@ -35,6 +37,7 @@
     "multer": "^2.4.0",
     "p-limit": "^7.3.3",
     "pg": "^8.23.0",
+    "pg-boss": "^12.38.1",
     "pg-copy-streams": "^7.0.0",
     "pino": "^10.4.0",
     "pino-http": "^11.0.0",
@@ -48,6 +51,7 @@
     "@electric-sql/pglite": "^0.5.8",
     "@types/pg": "^8.23.1",
     "@vitest/coverage-v8": "^5.0.0",
+    "concurrently": "^9.2.5",
     "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.10",
     "mongodb-memory-server": "^11.3.0",

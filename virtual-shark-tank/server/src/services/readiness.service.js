@@ -5,7 +5,7 @@ import { ApiError } from "../utils/apiError.js";
 
 const MODEL_VERSION = "rules-v1";
 
-// ─── Ownership ─────────────────────────────────────────────────
+// ─── Ownership (used by route-facing wrappers only) ───────────
 const assertOwnership = async (businessId, userId) => {
   const [business] = await db
     .select()
@@ -20,153 +20,132 @@ const assertOwnership = async (businessId, userId) => {
   return business;
 };
 
-// ─── Feature vector ────────────────────────────────────────────
-const PROFILE_FIELDS = [
-  "companyName",
-  "sector",
-  "city",
-  "description",
-  "fundingAsk",
-  "yearsOperating",
+// ─── Feature table (sums to 100 at verified tier) ─────────────
+const FEATURES = [
+  { key: "companyName",       label: "Company name",       weight: 5,  test: (b) => !!b.companyName },
+  { key: "sector",            label: "Sector",             weight: 5,  test: (b) => !!b.sector },
+  { key: "city",              label: "City",               weight: 5,  test: (b) => !!b.city },
+  { key: "description",       label: "Description",        weight: 10, test: (b) => (b.description || "").length >= 100 },
+  { key: "tagline",           label: "Tagline",            weight: 5,  test: (b) => !!b.tagline },
+  { key: "businessModel",     label: "Business model",     weight: 5,  test: (b) => !!b.businessModel },
+  { key: "employeeCount",     label: "Employee count",     weight: 5,  test: (b) => b.employeeCount != null },
+  { key: "teamSize",          label: "Team size",          weight: 5,  test: (b) => Number(b.employeeCount) >= 10 },
+  { key: "fundingAsk",        label: "Funding ask",        weight: 5,  test: (b) => !!b.fundingAsk },
+  { key: "fundingInstrument", label: "Funding instrument", weight: 5,  test: (b) => !!b.fundingInstrument },
+  { key: "useOfFunds",        label: "Use of funds",       weight: 5,  test: (b) => Array.isArray(b.useOfFunds) && b.useOfFunds.length > 0 },
+  { key: "revenueRange",      label: "Revenue range",      weight: 10, test: (b) => !!b.revenueRange },
+  { key: "customerCount",     label: "Customer count",     weight: 5,  test: (b) => b.customerCount != null },
+  { key: "revenueTrend",      label: "Revenue trend",      weight: 5,  test: (b) => !!b.revenueTrendBracket },
+  { key: "verifiedDocs",      label: "Verified documents", weight: 10, test: (b) => b.verificationTier === "verified" },
+  { key: "basicDocs",         label: "Basic documents",    weight: 5,  test: (b) => b.verificationTier === "basic" },
+  { key: "website",           label: "Website",            weight: 5,  test: (b) => !!b.websiteUrl },
+  { key: "logo",              label: "Logo",               weight: 5,  test: (b) => !!b.logoUrl },
 ];
-const DOC_FIELDS = ["udyamNumber", "gstNumber", "shopActLicense"];
 
-const computeFeatureVector = (business) => {
-  const features = {};
+// ─── Pure computation ────────────────────────────────────────
+export function computeReadiness(business = {}) {
+  const breakdown = FEATURES.map((f) => {
+    const passed = !!f.test(business);
+    return {
+      key: f.key,
+      label: f.label,
+      points: passed ? f.weight : 0,
+      maxPoints: f.weight,
+      passed,
+    };
+  });
 
-  // 1. Profile completeness — 5 pts per filled field, 6 fields → 30 max
-  const filledCount = PROFILE_FIELDS.filter((f) => {
-    const v = business[f];
-    return v !== null && v !== undefined && v !== "";
-  }).length;
-  features.profileCompleteness = {
-    value: filledCount,
-    contribution: filledCount * 5,
-    maxContribution: 30,
-  };
+  // Verification tier is exclusive: verified implies basic, so `basicDocs`
+  // is not a legitimate gap when the business is already verified.
+  const notApplicable = new Set();
+  if (business.verificationTier === "verified") notApplicable.add("basicDocs");
 
-  // 2. Documents — 5 pts per doc number → 15 max
-  const docsPresent = DOC_FIELDS.filter((d) => business[d]).length;
-  features.documents = {
-    value: docsPresent,
-    contribution: docsPresent * 5,
-    maxContribution: 15,
-  };
+  const score = breakdown.reduce((sum, b) => sum + b.points, 0);
 
-  // 3. Verification tier — 0 / 7 / 15
-  const tierPoints = { unverified: 0, basic: 7, verified: 15 };
-  const tier = business.verificationTier || "unverified";
-  features.verificationTier = {
-    value: tier,
-    contribution: tierPoints[tier] ?? 0,
-    maxContribution: 15,
-  };
+  const missing = breakdown
+    .filter((b) => !b.passed && !notApplicable.has(b.key))
+    .map((b) => ({ key: b.key, label: b.label, impact: b.maxPoints }))
+    .sort((a, b) => b.impact - a.impact);
 
-  // 4. Description depth — 0 / 5 / 10
-  const descLen = (business.description || "").length;
-  const descPoints = descLen >= 100 ? 10 : descLen >= 50 ? 5 : 0;
-  features.descriptionDepth = {
-    value: descLen,
-    contribution: descPoints,
-    maxContribution: 10,
-  };
-
-  // 5. Years operating — 1 pt per year, capped at 10
-  const years = business.yearsOperating || 0;
-  features.yearsOperating = {
-    value: years,
-    contribution: Math.min(years, 10),
-    maxContribution: 10,
-  };
-
-  // 6. Funding ask — set = 10
-  features.fundingAsk = {
-    value: business.fundingAsk ? Number(business.fundingAsk) : null,
-    contribution: business.fundingAsk ? 10 : 0,
-    maxContribution: 10,
-  };
-
-  // 7. Profile marked complete — 10
-  features.profileComplete = {
-    value: business.isProfileComplete,
-    contribution: business.isProfileComplete ? 10 : 0,
-    maxContribution: 10,
-  };
-
-  return features;
-};
-
-// ─── Template-based suggestions (no LLM) ───────────────────────
-const TEMPLATES = {
-  profileCompleteness: (f) =>
-    `Fill ${6 - f.value} more profile field${6 - f.value === 1 ? "" : "s"} — up to ${f.maxContribution - f.contribution} points`,
-
-  documents: (f) =>
-    `Add ${3 - f.value} more registration number${3 - f.value === 1 ? "" : "s"} (Udyam, GST, or Shop Act) — up to ${f.maxContribution - f.contribution} points`,
-
-  verificationTier: (f) =>
-    `Verify a business document to raise your tier — +${f.maxContribution - f.contribution} points`,
-
-  descriptionDepth: (f) =>
-    `Expand your business description to 100+ characters — +${f.maxContribution - f.contribution} points`,
-
-  yearsOperating: (f) =>
-    `Confirm ${f.maxContribution - f.contribution} more year${f.maxContribution - f.contribution === 1 ? "" : "s"} of operation — +${f.maxContribution - f.contribution} points`,
-
-  fundingAsk: () => `Set a funding ask amount — +10 points`,
-
-  profileComplete: () => `Mark your profile as complete — +10 points`,
-};
-
-const buildSuggestions = (breakdown) =>
-  breakdown
-    .filter((f) => f.contribution < f.maxContribution)
-    .sort(
-      (a, b) =>
-        b.maxContribution -
-        b.contribution -
-        (a.maxContribution - a.contribution)
-    )
+  const suggestions = missing
     .slice(0, 3)
-    .map((f) => TEMPLATES[f.feature]?.(f))
-    .filter(Boolean);
+    .map((m) => `Add ${m.label.toLowerCase()} to improve your readiness score`);
 
-// ─── Public API ────────────────────────────────────────────────
-export const computeReadiness = async (businessId, userId) => {
-  const business = await assertOwnership(businessId, userId);
+  return { score, percentage: score, breakdown, missing, suggestions };
+}
 
-  const features = computeFeatureVector(business);
+// ─── Persist ─────────────────────────────────────────────────
+export async function recomputeReadiness(businessId, userId = null) {
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
 
-  const breakdown = Object.entries(features).map(([feature, data]) => ({
-    feature,
-    value: data.value,
-    contribution: data.contribution,
-    maxContribution: data.maxContribution,
-  }));
+  if (!business) return null;
 
-  const score = Math.round(
-    breakdown.reduce((sum, f) => sum + f.contribution, 0)
-  );
+  if (userId !== null && business.ownerId !== userId) {
+    throw ApiError.forbidden("You do not own this business");
+  }
 
-  const suggestions = buildSuggestions(breakdown);
+  const result = computeReadiness(business);
 
   const [row] = await db
     .insert(readinessScores)
     .values({
       businessId,
-      score,
+      score: result.score,
       modelVersion: MODEL_VERSION,
-      shapBreakdown: breakdown,
-      suggestions,
+      shapBreakdown: result.breakdown,
+      suggestions: result.suggestions,
       sector: business.sector || null,
       stage: null,
       computedAt: new Date(),
     })
     .returning();
 
-  return row;
-};
+  await db
+    .update(businesses)
+    .set({ currentReadinessScore: result.score })
+    .where(eq(businesses.id, businessId));
 
+  return row;
+}
+
+// ─── Latest or compute-on-the-fly (no ownership) ─────────────
+export async function getReadiness(businessId) {
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+
+  if (!business) throw ApiError.notFound("Business not found");
+
+  const computed = computeReadiness(business);
+
+  const [row] = await db
+    .select()
+    .from(readinessScores)
+    .where(eq(readinessScores.businessId, businessId))
+    .orderBy(desc(readinessScores.computedAt))
+    .limit(1);
+
+  if (row) {
+    // Persisted score is authoritative; shape comes from the recompute
+    return {
+      ...computed,
+      score: row.score,
+      percentage: row.score,
+      persisted: true,
+      computedAt: row.computedAt,
+    };
+  }
+
+  return computed;
+}
+
+// ─── Ownership-checked wrappers for routes ───────────────────
 export const getLatestReadiness = async (businessId, userId) => {
   await assertOwnership(businessId, userId);
 

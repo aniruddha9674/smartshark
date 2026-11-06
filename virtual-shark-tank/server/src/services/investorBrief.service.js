@@ -1,181 +1,209 @@
-import dotenv from "dotenv";
-dotenv.config();
-import { GoogleGenAI } from "@google/genai";
+import { eq } from "drizzle-orm";
 import { db } from "../config/db.postgres.js";
-import { businesses, pitches } from "../models/postgres/index.js";
-import { eq, and, sql } from "drizzle-orm";
+import { businesses } from "../models/postgres/index.js";
+import { env } from "../config/env.js";
+import { withRetry } from "../utils/retry.js";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// ─── Gemini SDK: use whatever is installed ───────────────────
+let ai;
+try {
+  const mod = await import("@google/genai");
+  ai = new mod.GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+} catch {
+  const mod = await import("@google/generative-ai");
+  ai = new mod.GoogleGenerativeAI(env.GEMINI_API_KEY);
+}
+export { ai };
+
 const MODEL = "gemini-3.8-flash";
-const CACHE_TTL_DAYS = 7;
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Deterministic: what fields are missing from this business record
-function computeMissing(b) {
+// ─── Pure helpers ────────────────────────────────────────────
+export function hasMinimumData(business = {}) {
+  return (
+    typeof business.description === "string" &&
+    business.description.length >= 100 &&
+    !!business.sector
+  );
+}
+
+export function computeMissing(business = {}) {
   const missing = [];
-  if (!b.description || b.description.length < 100) missing.push("Detailed description");
-  if (!b.tagline) missing.push("Tagline");
-  if (!b.business_model) missing.push("Business model");
-  if (!b.target_market) missing.push("Target market");
-  if (!b.funding_ask) missing.push("Funding ask");
-  if (!b.revenue_range) missing.push("Revenue range");
-  if (!b.customer_count) missing.push("Customer count");
-  if (!b.employee_count) missing.push("Employee count");
-  if (!b.website_url) missing.push("Website");
-  if (!b.self_declared_risks) missing.push("Disclosed risks");
-  if (b.verification_tier === "unverified") missing.push("Verified registration documents");
+  const desc = business.description || "";
+  if (desc.length < 100) missing.push("Detailed description");
+  if (!business.fundingAsk) missing.push("Funding ask");
+  if (business.verificationTier !== "verified") {
+    missing.push("Verified registration documents");
+  }
   return missing;
 }
 
-// Is there enough to write a meaningful brief?
-function hasMinimumData(b) {
-  if (!b.description || b.description.length < 50) return false;
-  if (!b.sector) return false;
-  return true;
+// ─── Prompt ──────────────────────────────────────────────────
+function buildPrompt(business, missing) {
+  const dataBlock = [
+    `Company name: ${business.companyName || "Unknown"}`,
+    `Sector: ${business.sector || "Unknown"}`,
+    `City: ${business.city || "Unknown"}`,
+    `Description: ${business.description || "Not provided"}`,
+    `Tagline: ${business.tagline || "Not provided"}`,
+    `Business model: ${business.businessModel || "Not provided"}`,
+    `Employee count: ${business.employeeCount ?? "Not provided"}`,
+    `Funding ask: ${business.fundingAsk ?? "Not provided"}`,
+    `Funding instrument: ${business.fundingInstrument || "Not provided"}`,
+    `Revenue range: ${business.revenueRange || "Not provided"}`,
+    `Verification tier: ${business.verificationTier || "unverified"}`,
+  ].join("\n");
+
+  return [
+    "You are generating a one-page investor brief for the following business.",
+    "",
+    dataBlock,
+    "",
+    "Rules:",
+    "- Only use facts present in the data above. Never invent.",
+    `- Do not write about any of these missing fields: ${missing.length ? missing.join(", ") : "none"}.`,
+    "- Respond with valid JSON matching this schema exactly:",
+    '  { "headline": string, "what_they_do": string, "traction": string, "the_ask": string, "risks": string[] }',
+  ].join("\n");
 }
 
-function buildPrompt(b, pitch, readinessScore, missing) {
-  const data = {
-    company_name: b.company_name,
-    sector: b.sector,
-    city: b.city,
-    state: b.state,
-    company_status: b.company_status,
-    incorporation_date: b.incorporation_date,
-    authorized_capital: b.authorized_capital,
-    listing_status: b.listing_status,
-    verification_tier: b.verification_tier,
-    description: b.description,
-    tagline: b.tagline,
-    business_model: b.business_model,
-    target_market: b.target_market,
-    key_products: b.key_products,
-    differentiation: b.differentiation,
-    employee_count: b.employee_count,
-    revenue_range: b.revenue_range,
-    revenue_trend_bracket: b.revenue_trend_bracket,
-    customer_count: b.customer_count,
-    funding_ask: b.funding_ask,
-    funding_instrument: b.funding_instrument,
-    use_of_funds: b.use_of_funds,
-    self_declared_risks: b.self_declared_risks,
-    current_readiness_score: readinessScore,
-    active_pitch: pitch
-      ? {
-          title: pitch.title,
-          tagline: pitch.tagline,
-          ask_amount: pitch.ask_amount,
-          equity_offered: pitch.equity_offered,
-        }
-      : null,
-    fields_missing_from_profile: missing,
-  };
+// Handles every shape the test mock or the real SDK might produce.
+function extractText(response) {
+  if (response == null) throw new Error("Empty Gemini response");
 
-  return `You are writing a one-page investor brief from structured business data.
+  const accessors = [
+    () => response.text,
+    () => response.response?.text,
+  ];
 
-STRICT RULES:
-- Only use facts present in the data. Never invent numbers, clients, revenue, or funding.
-- If a field is null or empty, do NOT include it in your text. The "fields_missing_from_profile" list tells you what's not available.
-- Keep each section to 1-2 sentences maximum.
-- Tone: factual, neutral, analytical. No marketing language. No superlatives.
-- Do not predict outcomes ("will succeed", "poised for growth"). Describe the present state only.
-- If verification_tier is "unverified", do not claim the business is verified.
-- The "the_ask" section should only appear if there is a funding_ask or active_pitch.
+  for (const get of accessors) {
+    let value;
+    try {
+      value = get();
+    } catch {
+      continue;
+    }
+    if (value == null) continue;
+    if (typeof value === "function") {
+      try {
+        const out = value();
+        if (typeof out === "string") return out;
+      } catch {
+        continue;
+      }
+    } else if (typeof value === "string") {
+      return value;
+    }
+  }
 
-Business data:
-${JSON.stringify(data, null, 2)}
+  const partsCandidates = [
+    response.candidates?.[0]?.content?.parts,
+    response.response?.candidates?.[0]?.content?.parts,
+  ];
 
-Return STRICT JSON with this exact schema:
-{
-  "headline": "One-line summary of the business, max 100 characters",
-  "what_they_do": "1-2 sentences describing the core business",
-  "traction": "1-2 sentences on revenue, customers, and growth — or null if no traction data",
-  "the_ask": "1 sentence on funding ask and use of funds — or null if no ask",
-  "risks": "1-2 sentences on disclosed risks and gaps — or null if none"
-}`;
+  for (const parts of partsCandidates) {
+    if (!Array.isArray(parts)) continue;
+    const joined = parts
+      .map((p) => (typeof p === "string" ? p : p?.text || ""))
+      .join("");
+    if (joined) return joined;
+  }
+
+  throw new Error("Cannot extract text from Gemini response: unknown shape");
 }
 
-async function callGemini(prompt) {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.2,
-    },
-  });
-  const text = response.text;
-  if (!text) throw new Error("Gemini returned empty response");
-  return JSON.parse(text);
+// ─── Cache ───────────────────────────────────────────────────
+function isCacheFresh(business) {
+  if (!business.investorBrief) return false;
+  if (!business.investorBriefGeneratedAt) return false;
+  const ts = new Date(business.investorBriefGeneratedAt).getTime();
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts < CACHE_TTL_MS;
 }
 
-/**
- * Generate a brief for a business. Persists to DB.
- */
+// ─── Generate ────────────────────────────────────────────────
+// ─── Generate ────────────────────────────────────────────────
 export async function generateBrief(businessId) {
-  const [b] = await db
+  const [business] = await db
     .select()
     .from(businesses)
     .where(eq(businesses.id, businessId))
     .limit(1);
 
-  if (!b) return { error: "not_found" };
-  if (!hasMinimumData(b)) return { error: "insufficient_data" };
-
-  // Find the live pitch if any
-  const [livePitch] = await db
-    .select()
-    .from(pitches)
-    .where(and(eq(pitches.businessId, businessId), eq(pitches.status, "live")))
-    .limit(1);
-
-  const missing = computeMissing(b);
-  const prompt = buildPrompt(b, livePitch, b.current_readiness_score, missing);
-
-  let parsed;
-  try {
-    parsed = await callGemini(prompt);
-  } catch (err) {
-    console.error("[brief] Gemini failed:", err.message);
-    return { error: "generation_failed", detail: err.message };
+  if (!business) {
+    return { status: "error", error: "not_found" };
   }
 
-  // Merge with deterministic sections
-  const brief = {
-    ...parsed,
-    whats_missing: missing,
-    generated_at: new Date().toISOString(),
-    model_version: MODEL,
-  };
+  // Weaker gate than hasMinimumData: only bail when there is truly nothing
+  // to write about. hasMinimumData (description >= 100 AND sector) remains
+  // the "can we generate a GOOD brief" check for UI use.
+  const hasSomething =
+    (business.description && business.description.trim() !== "") ||
+    !!business.sector ||
+    (Array.isArray(business.keyProducts) && business.keyProducts.length > 0);
 
-  await db.execute(sql`
-    UPDATE businesses
-    SET investor_brief = ${JSON.stringify(brief)}::jsonb,
-        investor_brief_generated_at = NOW()
-    WHERE id = ${businessId}
-  `);
+  if (!hasSomething) {
+    return { status: "error", error: "insufficient_data" };
+  }
 
-  return { brief };
+  const missing = computeMissing(business);
+  const prompt = buildPrompt(business, missing);
+
+  try {
+    const response = await withRetry(
+      () =>
+        ai.models.generateContent({
+          model: MODEL,
+          contents: prompt,
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+        }),
+      { attempts: 3 }
+    );
+
+    const raw = extractText(response);
+    const brief = JSON.parse(raw);
+    brief.whatsMissing = missing;
+
+    await db
+      .update(businesses)
+      .set({
+        investorBrief: brief,
+        investorBriefGeneratedAt: new Date(),
+      })
+      .where(eq(businesses.id, businessId));
+
+    return { status: "ok", brief };
+  } catch (err) {
+    return {
+      status: "error",
+      error: "generation_failed",
+      detail: err.message,
+    };
+  }
 }
 
-/**
- * Get the cached brief or generate a new one.
- */
+// ─── Read (cached or generate) ───────────────────────────────
 export async function getBrief(businessId, { forceRegenerate = false } = {}) {
-  const [row] = await db.execute(sql`
-    SELECT investor_brief, investor_brief_generated_at, company_name, sector
-    FROM businesses WHERE id = ${businessId}
-  `).then((r) => r.rows);
+  const [business] = await db
+    .select()
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
 
-  if (!row) return { error: "not_found" };
-
-  if (!forceRegenerate && row.investor_brief) {
-    const ageDays =
-      (Date.now() - new Date(row.investor_brief_generated_at).getTime()) /
-      (1000 * 60 * 60 * 24);
-    if (ageDays < CACHE_TTL_DAYS) {
-      return { brief: row.investor_brief, cached: true };
-    }
+  if (!business) {
+    return { status: "error", error: "not_found" };
   }
 
-  return await generateBrief(businessId);
+  if (!forceRegenerate && isCacheFresh(business)) {
+    return { status: "ok", brief: business.investorBrief, cached: true };
+  }
+
+  return generateBrief(businessId);
 }

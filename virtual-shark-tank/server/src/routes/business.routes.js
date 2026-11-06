@@ -7,6 +7,7 @@ import {
 } from "../validators/businessProfile.validator.js";
 import { requireAuth } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import * as profileDraftController from "../controllers/profileDraft.controller.js";
 
 const router = Router();
 
@@ -234,5 +235,16 @@ router.get("/:id/brief", asyncHandler(businessController.getInvestorBrief));
 router.get("/:id/history", asyncHandler(businessController.getHistory));
 
 router.get("/:id/profile", asyncHandler(businessController.getCompanyProfile));
+router.post(
+  "/:id/profile-draft",
+  requireAuth,
+  asyncHandler(profileDraftController.startDraft)
+);
+
+router.get(
+  "/:id/profile-draft/:jobId",
+  requireAuth,
+  asyncHandler(profileDraftController.getDraftStatus)
+);
 
 export default router;
