@@ -53,7 +53,7 @@ describe("Readiness endpoints", () => {
       expect(res.body.readiness.suggestions.length).toBeLessThanOrEqual(3);
     });
 
-    it("adds 5 points per profile field", async () => {
+    it("scores 20 for companyName + sector + city + fundingAsk (short description)", async () => {
       const { token, businessId } = await setupBusiness();
 
       await db
@@ -61,9 +61,9 @@ describe("Readiness endpoints", () => {
         .set({
           sector: "SaaS",
           city: "Bangalore",
-          description: "We build tools",
+          description: "We build tools", // 15 chars — below 100 threshold
           fundingAsk: 5000000,
-          yearsOperating: 3,
+          yearsOperating: 3, // not scored in new model
         })
         .where(eq(businesses.id, businessId));
 
@@ -72,11 +72,29 @@ describe("Readiness endpoints", () => {
         .set("Authorization", `Bearer ${token}`)
         .expect(201);
 
-      // 6 fields × 5 = 30, plus yearsOperating (3) = 43
-      expect(res.body.readiness.score).toBe(43);
+      // companyName(5) + sector(5) + city(5) + fundingAsk(5) = 20
+      // description too short, yearsOperating not a feature
+      expect(res.body.readiness.score).toBe(20);
     });
 
-    it("awards 5 points per document number", async () => {
+    it("scores 15 when description is 100+ characters", async () => {
+      const { token, businessId } = await setupBusiness();
+
+      await db
+        .update(businesses)
+        .set({ description: "a".repeat(150) })
+        .where(eq(businesses.id, businessId));
+
+      const res = await request(app)
+        .post(`/api/businesses/${businessId}/readiness/recompute`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(201);
+
+      // companyName(5) + description(10) = 15
+      expect(res.body.readiness.score).toBe(15);
+    });
+
+    it("does not score individual document numbers (only tier)", async () => {
       const { token, businessId } = await setupBusiness();
 
       await db
@@ -92,11 +110,11 @@ describe("Readiness endpoints", () => {
         .set("Authorization", `Bearer ${token}`)
         .expect(201);
 
-      // 5 (companyName) + 10 (two docs) = 15
-      expect(res.body.readiness.score).toBe(15);
+      // New model scores tier, not individual docs. Tier stays unverified → 5
+      expect(res.body.readiness.score).toBe(5);
     });
 
-    it("awards 15 points for verified tier", async () => {
+    it("awards 10 points for verified tier", async () => {
       const { token, businessId } = await setupBusiness();
 
       await db
@@ -109,26 +127,42 @@ describe("Readiness endpoints", () => {
         .set("Authorization", `Bearer ${token}`)
         .expect(201);
 
-      expect(res.body.readiness.score).toBe(20); // 5 + 15
+      // companyName(5) + verifiedDocs(10) = 15
+      expect(res.body.readiness.score).toBe(15);
     });
 
-    it("gives a fully complete business 100", async () => {
+    it("awards 5 points for basic tier", async () => {
       const { token, businessId } = await setupBusiness();
-      const longDesc = "a".repeat(150);
+
+      await db
+        .update(businesses)
+        .set({ verificationTier: "basic" })
+        .where(eq(businesses.id, businessId));
+
+      const res = await request(app)
+        .post(`/api/businesses/${businessId}/readiness/recompute`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(201);
+
+      // companyName(5) + basicDocs(5) = 10
+      expect(res.body.readiness.score).toBe(10);
+    });
+
+    it("scores 35 for the minimum-filled business (name+sector+city+long desc+verified)", async () => {
+      const { token, businessId } = await setupBusiness();
 
       await db
         .update(businesses)
         .set({
           sector: "SaaS",
           city: "Bangalore",
-          description: longDesc,
+          description: "a".repeat(150),
           fundingAsk: 5000000,
-          yearsOperating: 15,
           udyamNumber: "UDYAM-XX-00-0000000",
           gstNumber: "29ABCDE1234F1Z5",
           shopActLicense: "SHOP-123",
           verificationTier: "verified",
-          isProfileComplete: true,
+          isProfileComplete: true, // not scored in new model
         })
         .where(eq(businesses.id, businessId));
 
@@ -137,7 +171,11 @@ describe("Readiness endpoints", () => {
         .set("Authorization", `Bearer ${token}`)
         .expect(201);
 
-      expect(res.body.readiness.score).toBe(100);
+      // companyName(5) + sector(5) + city(5) + description(10) +
+      // fundingAsk(5) + verifiedDocs(10) = 40
+      // Note: udyamNumber/gstNumber/shopActLicense don't score independently
+      // (only tier does), isProfileComplete not a feature
+      expect(res.body.readiness.score).toBe(40);
     });
 
     it("persists a row to readiness_scores", async () => {
@@ -154,7 +192,7 @@ describe("Readiness endpoints", () => {
       expect(rows[0].modelVersion).toBe("rules-v1");
     });
 
-    it("shapBreakdown contributions sum to the score", async () => {
+    it("breakdown points sum to the score", async () => {
       const { token, businessId } = await setupBusiness();
 
       const res = await request(app)
@@ -163,13 +201,13 @@ describe("Readiness endpoints", () => {
         .expect(201);
 
       const sum = res.body.readiness.shapBreakdown.reduce(
-        (s, f) => s + f.contribution,
+        (s, f) => s + f.points,
         0
       );
       expect(sum).toBe(res.body.readiness.score);
     });
 
-    it("suggestions reference the biggest gaps first", async () => {
+    it("suggestions reference specific fields to improve", async () => {
       const { token, businessId } = await setupBusiness();
 
       const res = await request(app)
@@ -177,8 +215,8 @@ describe("Readiness endpoints", () => {
         .set("Authorization", `Bearer ${token}`)
         .expect(201);
 
-      // Fresh business has gaps in profileCompleteness (25 remaining), documents (15), etc.
-      expect(res.body.readiness.suggestions[0]).toMatch(/profile field/i);
+      // New model produces per-field suggestions like "Add description to improve..."
+      expect(res.body.readiness.suggestions[0]).toMatch(/add .+ to improve/i);
     });
 
     it("returns no more than 3 suggestions", async () => {

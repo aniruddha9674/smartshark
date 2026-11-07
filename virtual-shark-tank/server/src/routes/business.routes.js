@@ -8,6 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth.middleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import * as profileDraftController from "../controllers/profileDraft.controller.js";
+import { validateUuidParams } from "../middleware/validateUuid.js";
 
 const router = Router();
 
@@ -238,13 +239,15 @@ router.get("/:id/profile", asyncHandler(businessController.getCompanyProfile));
 router.post(
   "/:id/profile-draft",
   requireAuth,
+  validateUuidParams("id"),
   asyncHandler(profileDraftController.startDraft)
 );
 
 router.get(
-  "/:id/profile-draft/:jobId",
+  "/:id/profile-draft",
   requireAuth,
-  asyncHandler(profileDraftController.getDraftStatus)
+  validateUuidParams("id"),
+  asyncHandler(profileDraftController.getDraft)
 );
 
 export default router;

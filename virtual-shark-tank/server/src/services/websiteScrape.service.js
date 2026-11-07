@@ -23,7 +23,7 @@ const BLOCKED_CIDRS = [
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 5000;
 
-function normalizeUrl(raw) {
+export function normalizeUrl(raw) {
   if (typeof raw !== "string" || raw.trim() === "") {
     throw new Error("Empty URL");
   }
@@ -37,11 +37,11 @@ function normalizeUrl(raw) {
   return `https://${trimmed}`;
 }
 
-function ipv4ToInt(ip) {
+export function ipv4ToInt(ip) {
   return ip.split(".").reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0;
 }
 
-function isBlockedIPv4(ip) {
+export function isBlockedIPv4(ip) {
   const target = ipv4ToInt(ip);
   return BLOCKED_CIDRS.some((cidr) => {
     const [base, bits] = cidr.split("/");
@@ -50,7 +50,7 @@ function isBlockedIPv4(ip) {
   });
 }
 
-function isBlockedIPv6(ip) {
+export function isBlockedIPv6(ip) {
   const lower = ip.toLowerCase();
   if (lower === "::1") return true;
   if (lower.startsWith("fe80:")) return true;
@@ -183,5 +183,5 @@ export function extractReadableText(html) {
 export async function scrapeWebsite(url) {
   const html = await fetchSafe(url);
   const text = extractReadableText(html);
-  return { url, text, charCount: text.length };
+  return { url,html, text, charCount: text.length };
 }

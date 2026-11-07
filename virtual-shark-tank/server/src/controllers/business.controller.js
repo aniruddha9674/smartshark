@@ -1,10 +1,12 @@
 import * as readinessService from "../services/readiness.service.js";
+import { ApiError } from "../utils/apiError.js";
 
 export const recomputeReadiness = async (req, res) => {
-  const readiness = await readinessService.computeReadiness(
+  const readiness = await readinessService.recomputeReadiness(
     req.params.id,
     req.user.id
   );
+  if (!readiness) throw ApiError.notFound("Business not found");
   res.status(201).json({ readiness });
 };
 
