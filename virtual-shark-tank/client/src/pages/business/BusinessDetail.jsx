@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, getErrorMessage } from "../../lib/api";
@@ -66,9 +66,156 @@ export default function BusinessDetail() {
 function ProfileTab({ business, businessId }) {
   const qc = useQueryClient();
   const isComplete = business.isProfileComplete === true || business.isProfileComplete === "true";
+  
+  const [isDrafting, setIsDrafting] = useState(false);
+  const [draftError, setDraftError] = useState("");
+  const [previewDrafts, setPreviewDrafts] = useState(null);
+  
+  // Track URL and file in the AI block
+  const [aiUrl, setAiUrl] = useState(business.websiteUrl || "");
+  const [aiFile, setAiFile] = useState(null);
+  const aiFileInputRef = useRef(null);
+
+  const handleAiDraft = async () => {
+    if (!aiFile && !aiUrl) {
+      setDraftError("Please enter your website URL or upload a document first.");
+      return;
+    }
+    
+    setIsDrafting(true);
+    setDraftError("");
+    setPreviewDrafts(null);
+    
+    try {
+      let documentUrl = null;
+
+      if (aiFile) {
+        // 1a. Upload the file first and use its URL for the draft
+        const formData = new FormData();
+        formData.append("file", aiFile);
+        const uploadRes = await api.post("/api/uploads", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        documentUrl = uploadRes.data?.data?.url;
+      } else if (aiUrl !== business.websiteUrl) {
+        // 1b. Save the URL to the DB first so the backend scrapes the right site
+        await api.patch(`/api/businesses/${businessId}`, { websiteUrl: aiUrl });
+      }
+
+      // 2. Trigger the AI Draft
+      const res = await api.post(
+        `/api/businesses/${businessId}/profile-draft?refresh=1`,
+        documentUrl ? { documentUrl } : {},
+        { timeout: 45000 }
+      );
+      
+      const drafts = res.data.drafts;
+      
+      if (!drafts || Object.keys(drafts).length === 0) {
+        setDraftError("AI couldn't find enough data on this website to auto-fill.");
+        return;
+      }
+
+      setPreviewDrafts(drafts);
+      
+    } catch (err) {
+      setDraftError(err.code === 'ECONNABORTED' 
+        ? "The AI took too long to respond. Please try again." 
+        : getErrorMessage(err));
+    } finally {
+      setIsDrafting(false);
+    }
+  };
+
+  const applyDrafts = async () => {
+    if (!previewDrafts) return;
+    setIsDrafting(true);
+    try {
+      const payload = {};
+      for (const [key, val] of Object.entries(previewDrafts)) {
+         payload[key] = val.value; 
+      }
+
+      await api.patch(`/api/businesses/${businessId}`, payload);
+      
+      setPreviewDrafts(null);
+      qc.invalidateQueries({ queryKey: ["business", businessId] });
+      
+    } catch (err) {
+      setDraftError(getErrorMessage(err));
+    } finally {
+      setIsDrafting(false);
+    }
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" key={business.updatedAt || Date.now()}>
+      
+      {/* AI Magic Block */}
+      <div className="p-5 bg-gradient-to-r from-brand/20 to-purple-500/20 border border-brand/30 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold text-white">✨ Auto-fill with AI</h3>
+          <p className="text-xs text-zinc-300 mt-1 max-w-md">
+            We'll read your website and draft your description, tagline, business model, and products.
+          </p>
+          {draftError && <p className="text-xs text-red-400 mt-2">{draftError}</p>}
+          
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 max-w-sm">
+            <input
+              type="url"
+              value={aiUrl}
+              onChange={(e) => setAiUrl(e.target.value)}
+              placeholder="https://yourcompany.com"
+              className="flex-1 px-3 py-1.5 bg-zinc-950/50 border border-zinc-700/50 rounded-lg text-zinc-200 text-sm outline-none focus:border-brand disabled:opacity-50"
+              disabled={isDrafting || !!aiFile}
+            />
+            <span className="text-xs text-zinc-400 text-center">OR</span>
+            <input
+              ref={aiFileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                setAiFile(file);
+                if (file) setAiUrl("");
+              }}
+              className="flex-1 text-xs text-zinc-400 file:mr-2 file:px-2 file:py-1.5 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-xs file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+              disabled={isDrafting}
+            />
+            {aiFile && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAiFile(null);
+                  setAiUrl(business.websiteUrl || "");
+                  if (aiFileInputRef.current) aiFileInputRef.current.value = "";
+                }}
+                className="px-2 py-1.5 text-xs text-zinc-400 hover:text-red-400 border border-zinc-700/50 rounded-lg"
+                title="Remove file"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={handleAiDraft}
+          disabled={isDrafting || previewDrafts}
+          className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
+        >
+          {isDrafting && !previewDrafts ? (
+            <>
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Scanning...
+            </>
+          ) : (
+            "Auto-fill"
+          )}
+        </button>
+      </div>
+
+      <MediaSection business={business} businessId={businessId} />
       <AboutSection business={business} businessId={businessId} />
       <FundingSection business={business} businessId={businessId} />
       <TractionSection business={business} businessId={businessId} />
@@ -77,6 +224,7 @@ function ProfileTab({ business, businessId }) {
       <ProductsSection business={business} businessId={businessId} />
       <RisksSection business={business} businessId={businessId} />
 
+      {/* Profile status section */}
       <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -101,10 +249,58 @@ function ProfileTab({ business, businessId }) {
           )}
         </div>
       </section>
+
+      {/* ─── DRAFTS REVIEW MODAL ─── */}
+      {previewDrafts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setPreviewDrafts(null)}>
+          <div 
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-zinc-800">
+              <h2 className="text-xl font-semibold text-zinc-100">Review AI Drafts</h2>
+              <p className="text-sm text-zinc-500 mt-1">
+                Here's what we found on your website. Click Apply to save these to your profile.
+              </p>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {Object.entries(previewDrafts).map(([key, draft]) => (
+                <div key={key} className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-zinc-300 capitalize">
+                      {key.replace(/([A-Z])/g, ' $1').trim()}
+                    </label>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                      draft.source === 'llm' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'
+                    }`}>
+                      {draft.source === 'llm' ? '✨ AI Draft' : '⟳ Website Data'}
+                    </span>
+                  </div>
+                  <textarea
+                    value={Array.isArray(draft.value) ? draft.value.join(", ") : draft.value}
+                    readOnly
+                    rows={2}
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-300 text-sm outline-none"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="p-6 border-t border-zinc-800 flex justify-end gap-3">
+              <button onClick={() => setPreviewDrafts(null)} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100">
+                Cancel
+              </button>
+              <button onClick={applyDrafts} disabled={isDrafting} className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {isDrafting ? "Saving..." : "Apply to Profile"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
 function EditableSection({ title, children, onSave, saving, saved, error }) {
   return (
     <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
@@ -149,11 +345,12 @@ const INPUT = "w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg te
 
 function AboutSection({ business, businessId }) {
   const qc = useQueryClient();
+  // Use camelCase
   const [form, setForm] = useState({
     tagline: business.tagline || "",
     description: business.description || "",
-    business_model: business.businessModel || "",
-    target_market: business.targetMarket || "",
+    businessModel: business.businessModel || "",
+    targetMarket: business.targetMarket || "",
     differentiation: business.differentiation || "",
   });
   const [saving, setSaving] = useState(false);
@@ -185,10 +382,10 @@ function AboutSection({ business, businessId }) {
         <textarea value={form.description} onChange={update("description")} rows={5} className={INPUT} placeholder="What the business does, who it serves, and why it exists." />
       </Field>
       <Field label="Business model">
-        <input value={form.business_model} onChange={update("business_model")} className={INPUT} placeholder="B2B SaaS, B2C marketplace, subscription, etc." />
+        <input value={form.businessModel} onChange={update("businessModel")} className={INPUT} placeholder="B2B SaaS, B2C marketplace, subscription, etc." />
       </Field>
       <Field label="Target market">
-        <input value={form.target_market} onChange={update("target_market")} className={INPUT} placeholder="Who buys this and where" />
+        <input value={form.targetMarket} onChange={update("targetMarket")} className={INPUT} placeholder="Who buys this and where" />
       </Field>
       <Field label="Differentiation">
         <textarea value={form.differentiation} onChange={update("differentiation")} rows={3} className={INPUT} placeholder="What makes this business different from alternatives" />
@@ -196,16 +393,16 @@ function AboutSection({ business, businessId }) {
     </EditableSection>
   );
 }
-
 // ─── Funding ──────────────────────────────────────────────────
 
 function FundingSection({ business, businessId }) {
   const qc = useQueryClient();
+  // Use camelCase
   const [form, setForm] = useState({
-    funding_ask: business.fundingAsk || "",
-    funding_instrument: business.fundingInstrument || "",
-    use_of_funds: business.useOfFunds || [],
-    planned_milestones: business.plannedMilestones || [],
+    fundingAsk: business.fundingAsk || "",
+    fundingInstrument: business.fundingInstrument || "",
+    useOfFunds: business.useOfFunds || [],
+    plannedMilestones: business.plannedMilestones || [],
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -216,8 +413,8 @@ function FundingSection({ business, businessId }) {
     try {
       const payload = {
         ...form,
-        funding_ask: form.funding_ask ? Number(form.funding_ask) : null,
-        funding_instrument: form.funding_instrument || null,
+        fundingAsk: form.fundingAsk ? Number(form.fundingAsk) : null,
+        fundingInstrument: form.fundingInstrument || null,
       };
       await api.patch(`/api/businesses/${businessId}`, payload);
       qc.invalidateQueries({ queryKey: ["business", businessId] });
@@ -230,30 +427,30 @@ function FundingSection({ business, businessId }) {
     }
   };
 
-  const addFund = () => setForm({ ...form, use_of_funds: [...form.use_of_funds, { category: "", pct: 0, description: "" }] });
-  const removeFund = (i) => setForm({ ...form, use_of_funds: form.use_of_funds.filter((_, idx) => idx !== i) });
+  const addFund = () => setForm({ ...form, useOfFunds: [...form.useOfFunds, { category: "", pct: 0, description: "" }] });
+  const removeFund = (i) => setForm({ ...form, useOfFunds: form.useOfFunds.filter((_, idx) => idx !== i) });
   const updateFund = (i, k, v) => {
-    const next = [...form.use_of_funds];
+    const next = [...form.useOfFunds];
     next[i] = { ...next[i], [k]: k === "pct" ? Number(v) : v };
-    setForm({ ...form, use_of_funds: next });
+    setForm({ ...form, useOfFunds: next });
   };
 
-  const addMilestone = () => setForm({ ...form, planned_milestones: [...form.planned_milestones, { months: 12, milestone: "" }] });
-  const removeMilestone = (i) => setForm({ ...form, planned_milestones: form.planned_milestones.filter((_, idx) => idx !== i) });
+  const addMilestone = () => setForm({ ...form, plannedMilestones: [...form.plannedMilestones, { months: 12, milestone: "" }] });
+  const removeMilestone = (i) => setForm({ ...form, plannedMilestones: form.plannedMilestones.filter((_, idx) => idx !== i) });
   const updateMilestone = (i, k, v) => {
-    const next = [...form.planned_milestones];
+    const next = [...form.plannedMilestones];
     next[i] = { ...next[i], [k]: k === "months" ? Number(v) : v };
-    setForm({ ...form, planned_milestones: next });
+    setForm({ ...form, plannedMilestones: next });
   };
 
   return (
     <EditableSection title="Funding" onSave={save} saving={saving} saved={saved} error={error}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Funding ask (₹)">
-          <input type="number" value={form.funding_ask} onChange={(e) => setForm({ ...form, funding_ask: e.target.value })} className={INPUT} placeholder="5000000" />
+          <input type="number" value={form.fundingAsk} onChange={(e) => setForm({ ...form, fundingAsk: e.target.value })} className={INPUT} placeholder="5000000" />
         </Field>
         <Field label="Instrument">
-          <select value={form.funding_instrument} onChange={(e) => setForm({ ...form, funding_instrument: e.target.value })} className={INPUT}>
+          <select value={form.fundingInstrument} onChange={(e) => setForm({ ...form, fundingInstrument: e.target.value })} className={INPUT}>
             <option value="">Select...</option>
             <option value="equity">Equity</option>
             <option value="debt">Debt</option>
@@ -269,7 +466,7 @@ function FundingSection({ business, businessId }) {
           <button onClick={addFund} className="text-xs text-brand hover:text-brand-hover">+ Add item</button>
         </div>
         <div className="space-y-2">
-          {form.use_of_funds.map((u, i) => (
+          {form.useOfFunds.map((u, i) => (
             <div key={i} className="flex gap-2 items-start">
               <input value={u.category} onChange={(e) => updateFund(i, "category", e.target.value)} placeholder="Category" className={INPUT + " flex-1"} />
               <input type="number" value={u.pct} onChange={(e) => updateFund(i, "pct", e.target.value)} placeholder="%" className={INPUT + " w-20"} min="0" max="100" />
@@ -277,7 +474,7 @@ function FundingSection({ business, businessId }) {
               <button onClick={() => removeFund(i)} className="text-zinc-600 hover:text-red-400 px-2 py-2">×</button>
             </div>
           ))}
-          {form.use_of_funds.length === 0 && (
+          {form.useOfFunds.length === 0 && (
             <p className="text-xs text-zinc-600">No items yet</p>
           )}
         </div>
@@ -289,14 +486,14 @@ function FundingSection({ business, businessId }) {
           <button onClick={addMilestone} className="text-xs text-brand hover:text-brand-hover">+ Add milestone</button>
         </div>
         <div className="space-y-2">
-          {form.planned_milestones.map((m, i) => (
+          {form.plannedMilestones.map((m, i) => (
             <div key={i} className="flex gap-2 items-start">
               <input type="number" value={m.months} onChange={(e) => updateMilestone(i, "months", e.target.value)} placeholder="Months" className={INPUT + " w-24"} min="1" />
               <input value={m.milestone} onChange={(e) => updateMilestone(i, "milestone", e.target.value)} placeholder="e.g. 5 clinics, ₹8 Cr revenue" className={INPUT + " flex-1"} />
               <button onClick={() => removeMilestone(i)} className="text-zinc-600 hover:text-red-400 px-2 py-2">×</button>
             </div>
           ))}
-          {form.planned_milestones.length === 0 && (
+          {form.plannedMilestones.length === 0 && (
             <p className="text-xs text-zinc-600">No milestones yet</p>
           )}
         </div>
@@ -304,18 +501,18 @@ function FundingSection({ business, businessId }) {
     </EditableSection>
   );
 }
-
 // ─── Traction ─────────────────────────────────────────────────
 
 function TractionSection({ business, businessId }) {
   const qc = useQueryClient();
+  // Use camelCase
   const [form, setForm] = useState({
-    revenue_range: business.revenueRange || "",
-    revenue_source: business.revenueSource || "",
-    revenue_trend_bracket: business.revenueTrendBracket || "",
-    customer_count: business.customerCount || "",
-    repeat_customer_pct: business.repeatCustomerPct || "",
-    monthly_order_volume: business.monthlyOrderVolume || "",
+    revenueRange: business.revenueRange || "",
+    revenueSource: business.revenueSource || "",
+    revenueTrendBracket: business.revenueTrendBracket || "",
+    customerCount: business.customerCount || "",
+    repeatCustomerPct: business.repeatCustomerPct || "",
+    monthlyOrderVolume: business.monthlyOrderVolume || "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -325,9 +522,9 @@ function TractionSection({ business, businessId }) {
     setSaving(true); setError(""); setSaved(false);
     try {
       const payload = { ...form };
-      payload.customer_count = payload.customer_count ? Number(payload.customer_count) : null;
-      payload.repeat_customer_pct = payload.repeat_customer_pct ? Number(payload.repeat_customer_pct) : null;
-      payload.monthly_order_volume = payload.monthly_order_volume ? Number(payload.monthly_order_volume) : null;
+      payload.customerCount = payload.customerCount ? Number(payload.customerCount) : null;
+      payload.repeatCustomerPct = payload.repeatCustomerPct ? Number(payload.repeatCustomerPct) : null;
+      payload.monthlyOrderVolume = payload.monthlyOrderVolume ? Number(payload.monthlyOrderVolume) : null;
       await api.patch(`/api/businesses/${businessId}`, payload);
       qc.invalidateQueries({ queryKey: ["business", businessId] });
       setSaved(true);
@@ -345,13 +542,13 @@ function TractionSection({ business, businessId }) {
     <EditableSection title="Traction" onSave={save} saving={saving} saved={saved} error={error}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Revenue range" hint="e.g. 3-5 Cr, 50L-1Cr, pre-revenue">
-  <input value={form.revenue_range} onChange={update("revenue_range")} className={INPUT} placeholder="e.g. 3-5 Cr" />
-</Field>
+          <input value={form.revenueRange} onChange={update("revenueRange")} className={INPUT} placeholder="e.g. 3-5 Cr" />
+        </Field>
         <Field label="Revenue source" hint="How do you know this figure?">
-          <input value={form.revenue_source} onChange={update("revenue_source")} className={INPUT} placeholder="self_reported, GST, bank statements" />
+          <input value={form.revenueSource} onChange={update("revenueSource")} className={INPUT} placeholder="self_reported, GST, bank statements" />
         </Field>
         <Field label="Trend">
-          <select value={form.revenue_trend_bracket} onChange={update("revenue_trend_bracket")} className={INPUT}>
+          <select value={form.revenueTrendBracket} onChange={update("revenueTrendBracket")} className={INPUT}>
             <option value="">Select...</option>
             <option value="declining">Declining</option>
             <option value="flat">Flat</option>
@@ -361,19 +558,18 @@ function TractionSection({ business, businessId }) {
           </select>
         </Field>
         <Field label="Customer count">
-          <input type="number" value={form.customer_count} onChange={update("customer_count")} className={INPUT} />
+          <input type="number" value={form.customerCount} onChange={update("customerCount")} className={INPUT} />
         </Field>
         <Field label="Repeat customer %">
-          <input type="number" value={form.repeat_customer_pct} onChange={update("repeat_customer_pct")} className={INPUT} min="0" max="100" />
+          <input type="number" value={form.repeatCustomerPct} onChange={update("repeatCustomerPct")} className={INPUT} min="0" max="100" />
         </Field>
         <Field label="Monthly order volume">
-          <input type="number" value={form.monthly_order_volume} onChange={update("monthly_order_volume")} className={INPUT} />
+          <input type="number" value={form.monthlyOrderVolume} onChange={update("monthlyOrderVolume")} className={INPUT} />
         </Field>
       </div>
     </EditableSection>
   );
 }
-
 // ─── Team ─────────────────────────────────────────────────────
 
 function TeamSection({ business, businessId }) {
@@ -425,11 +621,13 @@ function TeamSection({ business, businessId }) {
 
 function SocialSection({ business, businessId }) {
   const qc = useQueryClient();
+  // Fix: use camelCase keys
   const [form, setForm] = useState({
-    website_url: business.websiteUrl || "",
-    linkedin_url: business.linkedinUrl || "",
-    twitter_url: business.twitterUrl || "",
+    websiteUrl: business.websiteUrl || "",
+    linkedinUrl: business.linkedinUrl || "",
+    twitterUrl: business.twitterUrl || "",
   });
+  
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -437,6 +635,7 @@ function SocialSection({ business, businessId }) {
   const save = async () => {
     setSaving(true); setError(""); setSaved(false);
     try {
+      // This will now correctly send websiteUrl, linkedinUrl, etc.
       await api.patch(`/api/businesses/${businessId}`, form);
       qc.invalidateQueries({ queryKey: ["business", businessId] });
       setSaved(true);
@@ -453,14 +652,138 @@ function SocialSection({ business, businessId }) {
   return (
     <EditableSection title="Digital presence" onSave={save} saving={saving} saved={saved} error={error}>
       <Field label="Website">
-        <input type="url" value={form.website_url} onChange={update("website_url")} className={INPUT} placeholder="https://..." />
+        <input type="url" value={form.websiteUrl} onChange={update("websiteUrl")} className={INPUT} placeholder="https://..." />
       </Field>
       <Field label="LinkedIn">
-        <input type="url" value={form.linkedin_url} onChange={update("linkedin_url")} className={INPUT} placeholder="https://linkedin.com/company/..." />
+        <input type="url" value={form.linkedinUrl} onChange={update("linkedinUrl")} className={INPUT} placeholder="https://linkedin.com/company/..." />
       </Field>
       <Field label="Twitter / X">
-        <input type="url" value={form.twitter_url} onChange={update("twitter_url")} className={INPUT} placeholder="https://x.com/..." />
+        <input type="url" value={form.twitterUrl} onChange={update("twitterUrl")} className={INPUT} placeholder="https://x.com/..." />
       </Field>
+    </EditableSection>
+  );
+}
+// ─── Branding & Media ─────────────────────────────────────────
+
+function MediaSection({ business, businessId }) {
+  const qc = useQueryClient();
+  const [logoUrl, setLogoUrl] = useState(business.logoUrl || "");
+  const [coverImageUrl, setCoverImageUrl] = useState(business.coverImageUrl || "");
+  const [uploading, setUploading] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const upload = async (file, field) => {
+    if (!file) return;
+    setUploading(field);
+    setError("");
+    setSaved(false);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadRes = await api.post("/api/uploads", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const url = uploadRes.data?.data?.url;
+      if (!url) throw new Error("Upload did not return a URL");
+
+      await api.patch(`/api/businesses/${businessId}`, { [field]: url });
+      if (field === "logoUrl") setLogoUrl(url);
+      else setCoverImageUrl(url);
+
+      qc.invalidateQueries({ queryKey: ["business", businessId] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setUploading("");
+    }
+  };
+
+  const save = async () => {
+    setUploading("save");
+    setError("");
+    setSaved(false);
+    try {
+      const payload = {};
+      if (logoUrl) payload.logoUrl = logoUrl;
+      if (coverImageUrl) payload.coverImageUrl = coverImageUrl;
+      if (Object.keys(payload).length === 0) return;
+
+      await api.patch(`/api/businesses/${businessId}`, payload);
+      qc.invalidateQueries({ queryKey: ["business", businessId] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setUploading("");
+    }
+  };
+
+  return (
+    <EditableSection
+      title="Branding & Media"
+      onSave={save}
+      saving={!!uploading}
+      saved={saved}
+      error={error}
+    >
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Company logo" hint="Square image, PNG or JPG">
+          <div className="space-y-2">
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt="Company logo"
+                className="w-20 h-20 object-contain bg-zinc-950 border border-zinc-800 rounded-lg"
+              />
+            )}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                upload(file, "logoUrl");
+                e.target.value = "";
+              }}
+              disabled={!!uploading}
+              className="w-full text-sm text-zinc-400 file:mr-3 file:px-3 file:py-2 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+            />
+            {uploading === "logoUrl" && (
+              <span className="text-xs text-zinc-400">Uploading logo...</span>
+            )}
+          </div>
+        </Field>
+
+        <Field label="Cover image" hint="Wide 16:9 image, PNG or JPG">
+          <div className="space-y-2">
+            {coverImageUrl && (
+              <img
+                src={coverImageUrl}
+                alt="Cover"
+                className="w-full h-20 object-cover bg-zinc-950 border border-zinc-800 rounded-lg"
+              />
+            )}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                upload(file, "coverImageUrl");
+                e.target.value = "";
+              }}
+              disabled={!!uploading}
+              className="w-full text-sm text-zinc-400 file:mr-3 file:px-3 file:py-2 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+            />
+            {uploading === "coverImageUrl" && (
+              <span className="text-xs text-zinc-400">Uploading cover image...</span>
+            )}
+          </div>
+        </Field>
+      </div>
     </EditableSection>
   );
 }
@@ -1001,7 +1324,7 @@ function DocumentsTab({ business, businessId }) {
       const uploadRes = await api.post("/api/uploads", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      const { url, publicId } = uploadRes.data;
+      const { url, publicId } = uploadRes.data?.data ?? {};
 
       await api.post("/api/verifications", {
         businessId,

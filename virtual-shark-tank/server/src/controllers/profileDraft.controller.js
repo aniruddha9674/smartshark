@@ -31,6 +31,7 @@ async function assertCanDraft(businessId, userId) {
 export const startDraft = async (req, res) => {
   const { id: businessId } = req.params;
   const refresh = req.query.refresh === "1";
+  const { documentUrl } = req.body;
 
   await assertCanDraft(businessId, req.user.id);
 
@@ -59,7 +60,7 @@ export const startDraft = async (req, res) => {
 
       IN_FLIGHT.add(businessId);
     try {
-      const result = await draftProfile(businessId);
+      const result = await draftProfile(businessId, { documentUrl });
 
     // Guard against overwriting a good draft with an empty one (reviewer's #3)
     if (result.fieldCount === 0) {

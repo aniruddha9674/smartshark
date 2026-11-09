@@ -1,8 +1,6 @@
-import { Link } from "react-router-dom";
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router-dom";
 import { useMyBusinesses } from "../../hooks/useMyBusinesses";
-import { api, getErrorMessage } from "../../lib/api";
+import { getErrorMessage } from "../../lib/api";
 
 const tierColors = {
   unverified: "bg-zinc-800 text-zinc-500",
@@ -64,9 +62,7 @@ export default function MyBusinesses() {
 }
 
 function BusinessCard({ business: b }) {
-  const qc = useQueryClient();
-  const [completing, setCompleting] = useState(false);
-  const [error, setError] = useState("");
+  const navigate = useNavigate();
 
   const initials = (b.companyName || "?")
     .split(" ")
@@ -78,20 +74,10 @@ function BusinessCard({ business: b }) {
   const tier = b.verificationTier || "unverified";
   const isComplete = b.isProfileComplete === true;
 
-  const complete = async () => {
-    setCompleting(true);
-    setError("");
-    try {
-      await api.post(`/api/businesses/${b.id}/complete`);
-      qc.invalidateQueries({ queryKey: ["my-businesses"] });
-      qc.invalidateQueries({ queryKey: ["business", b.id] });
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setCompleting(false);
-    }
+  const openWizard = () => {
+    // This is the path that renders BusinessDetail.jsx inside your Dashboard
+    navigate(`/dashboard/businesses/${b.id}`);
   };
-
   return (
     <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors">
       <Link to={`/dashboard/businesses/${b.id}`} className="block">
@@ -133,22 +119,14 @@ function BusinessCard({ business: b }) {
         </div>
       </Link>
 
-      {!isComplete && (
-        <div className="mt-4 pt-4 border-t border-zinc-800">
-          <button
-            onClick={complete}
-            disabled={completing}
-            className="w-full px-3 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
-          >
-            {completing ? "Completing..." : "Mark profile complete"}
-          </button>
-          {error && (
-            <div className="mt-2 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
-              {error}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="mt-4 pt-4 border-t border-zinc-800">
+        <button
+          onClick={openWizard}
+          className="w-full px-3 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium"
+        >
+          {isComplete ? "Edit profile" : "Complete profile"}
+        </button>
+      </div>
     </div>
   );
 }

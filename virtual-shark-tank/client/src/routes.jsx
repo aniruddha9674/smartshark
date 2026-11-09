@@ -2,9 +2,9 @@ import { Routes, Route } from "react-router-dom";
 import Landing from "./pages/public/Landing";
 import Login from "./pages/public/Login";
 import Register from "./pages/public/Register";
-import BusinessDashboard from "./pages/business/Dashboard";
-import InvestorDashboard from "./pages/investor/Dashboard";
+import Dashboard from "./pages/business/Dashboard"; // Unified dashboard
 import ProtectedRoute from "./components/ProtectedRoute";
+import BusinessOnboarding from "./pages/onboarding/BusinessOnboarding";
 
 export default function AppRoutes() {
   return (
@@ -13,20 +13,22 @@ export default function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
+      {/* 1. Onboarding Route (Standalone, no sidebar) */}
       <Route
-        path="/business/*"
+        path="/onboarding/*"
         element={
-          <ProtectedRoute role="business">
-            <BusinessDashboard />
+          <ProtectedRoute>
+            <BusinessOnboarding />
           </ProtectedRoute>
         }
       />
 
+      {/* 2. Dashboard Route (Contains sidebar, matches your Dashboard.jsx links) */}
       <Route
-        path="/investor/*"
+        path="/dashboard/*"
         element={
-          <ProtectedRoute role="investor">
-            <InvestorDashboard />
+          <ProtectedRoute>
+            <Dashboard />
           </ProtectedRoute>
         }
       />

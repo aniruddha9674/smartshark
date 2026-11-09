@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import axios from "axios";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "../config/db.postgres.js";
 import { businesses } from "../models/postgres/index.js";
@@ -111,6 +112,32 @@ async function callGemini(prompt, model) {
   catch { throw normalizeGeminiError("Gemini returned non-JSON text"); }
 }
 
+async function fetchFileAsBase64(url) {
+  const response = await axios.get(url, { responseType: "arraybuffer" });
+  return Buffer.from(response.data).toString("base64");
+}
+
+async function callGeminiMultimodal(prompt, base64Data, mimeType) {
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: PRIMARY_MODEL,
+      contents: [
+        { text: prompt },
+        { inlineData: { data: base64Data, mimeType } },
+      ],
+      config: { responseMimeType: "application/json", temperature: 0.3 },
+    });
+  } catch (err) {
+    throw normalizeGeminiError(err);
+  }
+  const raw = typeof response.text === "function" ? response.text() : response.text;
+  if (!raw) throw normalizeGeminiError("Empty response from Gemini");
+  if (raw.trim().startsWith('{"error"')) throw normalizeGeminiError(raw);
+  try { return JSON.parse(raw); }
+  catch { throw normalizeGeminiError("Gemini returned non-JSON text"); }
+}
+
 async function callGeminiWithFallback(prompt) {
   try {
     return await withRetry(() => callGemini(prompt, PRIMARY_MODEL), {
@@ -150,7 +177,7 @@ function sanitizeLlmDrafts(raw) {
 
 // ─── Main service ───────────────────────────────────────────
 
-export async function draftProfile(businessId) {
+export async function draftProfile(businessId, { documentUrl } = {}) {
   const t0 = Date.now();
 
   const [business] = await db
@@ -161,11 +188,27 @@ export async function draftProfile(businessId) {
 
   if (!business) throw new Error("Business not found");
 
-  // 1. Scrape — scrapeWebsite now returns { url, html, text, charCount }
+  // 1. Source — either an uploaded document or the website
   let html = null;
   let readableText = "";
   let scrapeCode = null;
-  if (business.websiteUrl) {
+  let fileBase64 = null;
+  let mimeType = null;
+
+  if (documentUrl) {
+    try {
+      fileBase64 = await fetchFileAsBase64(documentUrl);
+      const lower = documentUrl.split("?")[0].toLowerCase();
+      mimeType = lower.endsWith(".pdf")
+        ? "application/pdf"
+        : lower.endsWith(".png")
+          ? "image/png"
+          : "image/jpeg";
+    } catch (err) {
+      scrapeCode = "document_fetch_failed";
+      console.warn(`[profileDraft] document fetch ${scrapeCode} for ${businessId}: ${err.message}`);
+    }
+  } else if (business.websiteUrl) {
     try {
       const scraped = await scrapeWebsite(business.websiteUrl);
       html = scraped.html;          // ← raw HTML for extraction
@@ -194,7 +237,9 @@ export async function draftProfile(businessId) {
   let llmCode = null;
   try {
     const prompt = buildDraftPrompt(business, extracted, readableText.slice(0, 6000));
-    const raw = await callGeminiWithFallback(prompt);
+    const raw = fileBase64
+      ? await callGeminiMultimodal(prompt, fileBase64, mimeType)
+      : await callGeminiWithFallback(prompt);
     llmDrafts = sanitizeLlmDrafts(raw);
   } catch (err) {
     llmCode = err.transient ? "llm_unavailable" : "llm_failed";
@@ -224,7 +269,7 @@ export async function draftProfile(businessId) {
     drafts: merged,
     extractionMethods,
     fieldCount: Object.keys(merged).length,
-    sourceUrl: html ? business.websiteUrl : null,
+    sourceUrl: documentUrl || business.websiteUrl,
     rawText: readableText.slice(0, 50_000),
     scrapeCode,
     llmCode,

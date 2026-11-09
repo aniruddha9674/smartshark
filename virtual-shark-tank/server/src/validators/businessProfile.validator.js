@@ -39,6 +39,8 @@ export const updateBusinessProfileSchema = z
     fundingAsk: z.coerce.number().positive().optional(),
     yearsOperating: z.coerce.number().int().min(0).max(100).optional(),
     websiteUrl: websiteUrlField,
+    logoUrl: z.string().url().max(1000).optional().nullable(),
+    coverImageUrl: z.string().url().max(1000).optional().nullable(),
     udyamNumber: z.string().max(50).optional().nullable(),
     gstNumber: z.string().max(50).optional().nullable(),
     shopActLicense: z.string().max(50).optional().nullable(),
