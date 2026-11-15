@@ -1,11 +1,12 @@
 import { Link, useNavigate } from "react-router-dom";
+import { Building2, Plus } from "lucide-react";
 import { useMyBusinesses } from "../../hooks/useMyBusinesses";
 import { getErrorMessage } from "../../lib/api";
 
 const tierColors = {
-  unverified: "bg-zinc-800 text-zinc-500",
-  basic: "bg-blue-500/10 text-blue-400",
-  verified: "bg-emerald-500/10 text-emerald-400",
+  unverified: "bg-slate-100 text-slate-600 border border-slate-200",
+  basic: "bg-blue-50 text-blue-700 border border-blue-100",
+  verified: "bg-emerald-50 text-emerald-700 border border-emerald-100",
 };
 
 const tierSymbol = {
@@ -17,10 +18,10 @@ const tierSymbol = {
 export default function MyBusinesses() {
   const { data: businesses, isLoading, error } = useMyBusinesses();
 
-  if (isLoading) return <div className="text-zinc-500">Loading...</div>;
+  if (isLoading) return <div className="text-sm text-slate-500">Loading...</div>;
   if (error) {
     return (
-      <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
         {getErrorMessage(error)}
       </div>
     );
@@ -28,12 +29,15 @@ export default function MyBusinesses() {
 
   if (!businesses || businesses.length === 0) {
     return (
-      <div className="text-center py-16">
-        <p className="text-zinc-500 mb-4">You haven't created a business yet.</p>
-        <Link
-          to="/onboarding/business"
-          className="inline-block px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium"
-        >
+      <div className="card flex flex-col items-center px-6 py-16 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+          <Building2 className="h-5 w-5" />
+        </div>
+        <p className="mt-4 text-sm text-slate-600">
+          You haven't created a business yet.
+        </p>
+        <Link to="/onboarding/business" className="btn-primary mt-5">
+          <Plus className="h-4 w-4" />
           Create a business
         </Link>
       </div>
@@ -42,17 +46,22 @@ export default function MyBusinesses() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">My Businesses</h1>
-        <Link
-          to="/onboarding/business"
-          className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg font-medium"
-        >
-          + Add Business
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            My Businesses
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Manage your profiles, documents, and pitches.
+          </p>
+        </div>
+        <Link to="/onboarding/business" className="btn-primary">
+          <Plus className="h-4 w-4" />
+          Add Business
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="joined-grid sm:grid-cols-2 xl:grid-cols-3">
         {businesses.map((b) => (
           <BusinessCard key={b.id} business={b} />
         ))}
@@ -75,34 +84,34 @@ function BusinessCard({ business: b }) {
   const isComplete = b.isProfileComplete === true;
 
   const openWizard = () => {
-    // This is the path that renders BusinessDetail.jsx inside your Dashboard
     navigate(`/dashboard/businesses/${b.id}`);
   };
+
   return (
-    <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors">
+    <div className="joined-cell flex flex-col p-5">
       <Link to={`/dashboard/businesses/${b.id}`} className="block">
         <div className="flex items-start gap-4">
           {b.logoUrl ? (
             <img
               src={b.logoUrl}
               alt={b.companyName}
-              className="w-12 h-12 rounded-lg object-contain bg-white p-1 flex-shrink-0"
+              className="h-12 w-12 flex-shrink-0 rounded-lg border border-slate-200 bg-white object-contain p-1"
             />
           ) : (
-            <div className="w-12 h-12 rounded-lg bg-zinc-800 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-tint text-sm font-semibold text-slate-900">
               {initials}
             </div>
           )}
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-zinc-100 truncate">
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate font-semibold text-slate-900">
               {b.companyName}
             </h3>
-            <p className="text-sm text-zinc-500 mt-1">
+            <p className="mt-1 text-sm text-slate-500">
               {b.sector || "—"} {b.city ? `· ${b.city}` : ""}
             </p>
-            <div className="flex items-center gap-2 mt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <span
-                className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded font-medium ${
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   tierColors[tier] || tierColors.unverified
                 }`}
               >
@@ -110,7 +119,7 @@ function BusinessCard({ business: b }) {
                 {tier}
               </span>
               {!isComplete && (
-                <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">
+                <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
                   Draft
                 </span>
               )}
@@ -119,10 +128,10 @@ function BusinessCard({ business: b }) {
         </div>
       </Link>
 
-      <div className="mt-4 pt-4 border-t border-zinc-800">
+      <div className="mt-4 border-t border-slate-200 pt-4">
         <button
           onClick={openWizard}
-          className="w-full px-3 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium"
+          className="btn-primary w-full"
         >
           {isComplete ? "Edit profile" : "Complete profile"}
         </button>

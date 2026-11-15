@@ -3,9 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, getErrorMessage } from "../../lib/api";
 
 const PROVENANCE_TAG = {
-  verified: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  self_declared: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  scraped: "bg-zinc-800 text-zinc-400 border-zinc-700",
+  verified: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
+  self_declared: "bg-amber-500/10 text-amber-700 border-amber-500/30",
+  scraped: "bg-slate-100 text-slate-500 border-slate-200",
 };
 
 export default function InvestorBrief({ businessId, verificationTier = "unverified" }) {
@@ -34,9 +34,9 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
 
   if (isLoading) {
     return (
-      <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl">
-        <div className="flex items-center gap-2 text-zinc-500 text-sm">
-          <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
+      <div className="p-6 bg-white border border-slate-200 rounded-xl">
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
           Generating investor brief...
         </div>
       </div>
@@ -45,7 +45,7 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
 
   if (error) {
     return (
-      <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400">
+      <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-600">
         {getErrorMessage(error)}
       </div>
     );
@@ -53,8 +53,8 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
 
   if (!data?.brief) {
     return (
-      <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl">
-        <p className="text-sm text-zinc-500">
+      <div className="p-6 bg-white border border-slate-200 rounded-xl">
+        <p className="text-sm text-slate-500">
           Not enough data yet to generate a brief. The owner needs to add a description and sector.
         </p>
       </div>
@@ -72,31 +72,31 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
   ].filter((s) => b[s.key]);
 
   return (
-    <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-xl overflow-hidden">
+    <div className="bg-gradient-to-br from-indigo-100 via-white to-white border border-slate-200 rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-zinc-800 flex items-start justify-between gap-4">
+      <div className="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold text-brand uppercase tracking-wider">
+            <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">
               AI Investor Brief
             </span>
             <span className={`text-xs px-1.5 py-0.5 rounded border ${PROVENANCE_TAG[tier]}`}>
               {tier === "verified" ? "verified sources" : "self-declared"}
             </span>
             {data.cached && (
-              <span className="text-xs text-zinc-600">
+              <span className="text-xs text-slate-400">
                 cached · {new Date(b.generated_at).toLocaleDateString()}
               </span>
             )}
           </div>
-          <h3 className="text-lg font-semibold text-zinc-100 leading-snug">
+          <h3 className="text-lg font-semibold text-slate-900 leading-snug">
             {b.headline}
           </h3>
         </div>
         <button
           onClick={regenerate}
           disabled={regenerating}
-          className="text-xs text-zinc-500 hover:text-zinc-300 whitespace-nowrap"
+          className="text-xs text-slate-500 hover:text-slate-700 whitespace-nowrap"
         >
           {regenerating ? "Regenerating..." : "Regenerate"}
         </button>
@@ -107,12 +107,12 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
         {sections.map((s) => (
           <div key={s.key}>
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-brand text-sm">{s.icon}</span>
-              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+              <span className="text-indigo-600 text-sm">{s.icon}</span>
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 {s.label}
               </span>
             </div>
-            <p className="text-sm text-zinc-300 leading-relaxed pl-6">
+            <p className="text-sm text-slate-700 leading-relaxed pl-6">
               {b[s.key]}
             </p>
           </div>
@@ -121,13 +121,13 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
 
       {/* Missing fields */}
       {b.whats_missing && b.whats_missing.length > 0 && (
-        <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/50">
-          <div className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-2">
+        <div className="px-6 py-4 border-t border-slate-200 bg-white">
+          <div className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2">
             Not provided by owner
           </div>
           <div className="flex flex-wrap gap-1.5">
             {b.whats_missing.map((m) => (
-              <span key={m} className="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded">
+              <span key={m} className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded">
                 {m}
               </span>
             ))}
@@ -136,7 +136,7 @@ export default function InvestorBrief({ businessId, verificationTier = "unverifi
       )}
 
       {/* Disclaimer */}
-      <div className="px-6 py-3 border-t border-zinc-800 bg-zinc-950 text-xs text-zinc-600">
+      <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-400">
         Generated from stored fields only. Not investment advice. Verify independently.
       </div>
     </div>

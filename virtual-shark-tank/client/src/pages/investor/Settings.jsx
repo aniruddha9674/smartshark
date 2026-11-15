@@ -3,7 +3,7 @@ import { api, getErrorMessage } from "../../lib/api";
 import { useAuth } from "../../stores/auth";
 
 const INPUT =
-  "w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand text-sm";
+  "w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-900 text-sm outline-none transition-colors focus:border-indigo-400 focus:ring-[3px] focus:ring-indigo-100";
 
 export default function Settings() {
   const user = useAuth((s) => s.user);
@@ -101,7 +101,7 @@ export default function Settings() {
     return (
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-semibold mb-6">Settings</h1>
-        <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl text-sm text-zinc-400">
+        <div className="p-6 bg-white border border-slate-200 rounded-xl text-sm text-slate-500">
           Investment preferences are available for investor accounts.
         </div>
       </div>
@@ -114,22 +114,22 @@ export default function Settings() {
 
       <form
         onSubmit={save}
-        className="bg-zinc-900 border border-zinc-800 rounded-xl p-6"
+        className="bg-white border border-slate-200 rounded-xl p-6"
       >
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+        <h2 className="overline mb-4">
           Investment Preferences
         </h2>
 
         {loading ? (
-          <p className="text-sm text-zinc-500">Loading...</p>
+          <p className="text-sm text-slate-500">Loading...</p>
         ) : missingProfile ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-slate-500">
             No investor profile found. Complete investor onboarding first.
           </p>
         ) : (
           <div className="space-y-4">
             <label className="block">
-              <span className="text-xs text-zinc-500 mb-1.5 block">
+              <span className="text-xs text-slate-500 mb-1.5 block">
                 Preferred sectors
               </span>
               <input
@@ -138,13 +138,13 @@ export default function Settings() {
                 className={INPUT}
                 placeholder="SaaS, Fintech, Climate"
               />
-              <span className="text-xs text-zinc-600 mt-1 block">
+              <span className="text-xs text-slate-400 mt-1 block">
                 Comma-separated. Used to pre-filter your feed by default.
               </span>
             </label>
 
             <label className="block">
-              <span className="text-xs text-zinc-500 mb-1.5 block">
+              <span className="text-xs text-slate-500 mb-1.5 block">
                 Preferred geography
               </span>
               <input
@@ -157,7 +157,7 @@ export default function Settings() {
 
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-xs text-zinc-500 mb-1.5 block">
+                <span className="text-xs text-slate-500 mb-1.5 block">
                   Min ticket size (₹)
                 </span>
                 <input
@@ -171,7 +171,7 @@ export default function Settings() {
               </label>
 
               <label className="block">
-                <span className="text-xs text-zinc-500 mb-1.5 block">
+                <span className="text-xs text-slate-500 mb-1.5 block">
                   Max ticket size (₹)
                 </span>
                 <input
@@ -186,17 +186,17 @@ export default function Settings() {
             </div>
 
             {error && (
-              <div className="px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
-                {error}
-              </div>
+                <div className="alert-danger px-3 py-2 text-xs">
+                  {error}
+                </div>
             )}
 
             <div className="flex items-center justify-end gap-3 pt-2">
-              {saved && <span className="text-xs text-emerald-400">Saved ✓</span>}
+              {saved && <span className="text-xs text-emerald-700">Saved ✓</span>}
               <button
                 type="submit"
                 disabled={saving}
-                className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
+                className="btn-primary"
               >
                 {saving ? "Saving..." : "Save preferences"}
               </button>

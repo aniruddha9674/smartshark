@@ -4,7 +4,7 @@ import { api, getErrorMessage } from "../../lib/api";
 import { useAuth } from "../../stores/auth";
 
 const inputClass =
-  "px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand";
+  "px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 outline-none focus:border-indigo-400";
 
 export default function InvestorOnboarding() {
   const navigate = useNavigate();
@@ -55,7 +55,7 @@ export default function InvestorOnboarding() {
     <div className="min-h-screen flex items-center justify-center p-6">
       <form
         onSubmit={submit}
-        className="w-full max-w-md flex flex-col gap-4 p-8 bg-zinc-900 border border-zinc-800 rounded-xl"
+        className="w-full max-w-md flex flex-col gap-4 p-8 bg-white border border-slate-200 rounded-xl"
       >
         <h1 className="text-2xl font-semibold">Tell us about your fund</h1>
 
@@ -94,7 +94,7 @@ export default function InvestorOnboarding() {
         />
 
         {error && (
-          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-600 rounded-lg">
             {error}
           </div>
         )}
@@ -102,7 +102,7 @@ export default function InvestorOnboarding() {
         <button
           type="submit"
           disabled={loading}
-          className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
+          className="btn-primary"
         >
           {loading ? "Saving..." : "Continue"}
         </button>

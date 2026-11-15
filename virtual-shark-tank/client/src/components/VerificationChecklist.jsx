@@ -35,12 +35,12 @@ export default function VerificationChecklist({ business }) {
   const target = 2;
 
   return (
-    <div className="mb-6 p-4 bg-zinc-900 border border-zinc-800 rounded-xl">
+    <div className="mb-6 p-4 bg-white border border-slate-200 rounded-xl">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-zinc-300">
+        <span className="text-sm font-medium text-slate-700">
           Verification progress
         </span>
-        <span className="text-sm text-zinc-500">
+        <span className="text-sm text-slate-500">
           {completed} / {target} verified
         </span>
       </div>
@@ -51,15 +51,15 @@ export default function VerificationChecklist({ business }) {
             <span
               className={`w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 text-xs ${
                 item.done
-                  ? "bg-emerald-500/20 text-emerald-400"
+                  ? "bg-emerald-500/20 text-emerald-700"
                   : item.uploaded
-                  ? "bg-amber-500/20 text-amber-400"
-                  : "bg-zinc-800 text-zinc-600"
+                  ? "bg-amber-500/20 text-amber-700"
+                  : "bg-slate-100 text-slate-400"
               }`}
             >
               {item.done ? "✓" : item.uploaded ? "…" : "·"}
             </span>
-            <span className={item.done ? "text-zinc-300" : "text-zinc-500"}>
+            <span className={item.done ? "text-slate-700" : "text-slate-500"}>
               {item.label}
             </span>
           </div>

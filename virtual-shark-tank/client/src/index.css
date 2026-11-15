@@ -1,13 +1,204 @@
+@config "../tailwind.config.js";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html {
-  background-color: #09090b;
-  color: #fafafa;
-  font-family: Inter, system-ui, sans-serif;
+:root {
+  --color-primary: 15 23 42;
+  --color-primary-fg: 255 255 255;
+  --color-tint: 224 231 255;
+  --color-accent: 251 146 60;
+  --color-bg: 248 250 252;
+  --color-surface: 255 255 255;
+  --color-border: 226 232 240;
+  --color-text: 15 23 42;
+  --color-text-muted: 100 116 139;
+
+  --font-heading: "Plus Jakarta Sans";
+  --font-body: "Inter";
+
+  /* Alternate font presets — enable by swapping the two variables above.
+     Editable & Elegant: --font-heading: "Outfit"; --font-body: "DM Sans";
+     High-End Editorial: --font-heading: "Playfair Display"; --font-body: "Lato";
+     Editorial preset should apply the display face to the landing hero only. */
 }
 
-body {
-  margin: 0;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background-color: rgb(var(--color-bg));
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: rgb(var(--color-bg));
+    color: rgb(var(--color-text));
+    font-family: var(--font-body), Inter, ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading), "Plus Jakarta Sans", ui-sans-serif,
+      system-ui, sans-serif;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    color: rgb(var(--color-primary));
+  }
+
+  ::selection {
+    background-color: rgb(var(--color-tint));
+    color: rgb(var(--color-primary));
+  }
+
+  .font-heading {
+    font-family: var(--font-heading), "Plus Jakarta Sans", ui-sans-serif,
+      system-ui, sans-serif;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn hover:bg-slate-800 active:bg-slate-950;
+    background-color: rgb(var(--color-primary));
+    color: rgb(var(--color-primary-fg));
+  }
+
+  .btn-secondary {
+    @apply btn border border-slate-200 bg-white text-slate-900 hover:border-indigo-200 hover:bg-indigo-100/60;
+  }
+
+  .btn-ghost {
+    @apply btn text-slate-900;
+  }
+
+  .btn-ghost:hover {
+    background-color: rgb(var(--color-tint));
+  }
+
+  .btn-accent {
+    @apply btn font-semibold hover:bg-orange-500;
+    background-color: rgb(var(--color-accent));
+    color: rgb(15 23 42);
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+
+  .btn-sm {
+    @apply h-8 px-3 text-xs;
+  }
+
+  .btn-lg {
+    @apply h-12 px-6 text-base;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-4;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-400 focus:ring-[3px] focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-slate-900;
+  }
+
+  .overline {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500;
+  }
+
+  .badge {
+    @apply inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium;
+  }
+
+  .badge-neutral {
+    @apply badge text-slate-900;
+    background-color: rgb(var(--color-tint));
+  }
+
+  .badge-info {
+    @apply badge bg-indigo-50 text-indigo-700;
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-50 text-emerald-700;
+  }
+
+  .badge-warning {
+    @apply badge bg-amber-50 text-amber-700;
+  }
+
+  .badge-danger {
+    @apply badge bg-red-50 text-red-700;
+  }
+
+  .badge-verified {
+    @apply badge bg-orange-100 text-orange-700;
+  }
+
+  .joined-grid {
+    @apply grid gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200;
+  }
+
+  .joined-cell {
+    @apply bg-white;
+  }
+
+  .alert {
+    @apply flex items-start gap-3 rounded-lg border-l-[3px] px-4 py-3 text-sm;
+  }
+
+  .alert-info {
+    @apply alert border-indigo-500 bg-indigo-50 text-indigo-900;
+  }
+
+  .alert-success {
+    @apply alert border-emerald-500 bg-emerald-50 text-emerald-900;
+  }
+
+  .alert-warning {
+    @apply alert border-amber-500 bg-amber-50 text-amber-900;
+  }
+
+  .alert-danger {
+    @apply alert border-red-500 bg-red-50 text-red-900;
+  }
+
+  .alert-accent {
+    @apply alert border-orange-400 bg-orange-50 text-slate-900;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

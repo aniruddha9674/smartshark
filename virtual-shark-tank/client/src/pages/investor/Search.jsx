@@ -22,7 +22,7 @@ export default function Search() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-2xl font-semibold mb-2">Search businesses</h1>
-      <p className="text-sm text-zinc-500 mb-6">
+      <p className="text-sm text-slate-500 mb-6">
         Fuzzy matching on name, sector, and city. Typos are okay.
       </p>
 
@@ -31,13 +31,13 @@ export default function Search() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Try 'incorbis', 'software', 'pune'..."
-          className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 outline-none focus:border-brand"
+          className="input px-4 py-3"
           autoFocus
         />
         {input && (
           <button
             onClick={() => setInput("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-sm"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 text-sm"
           >
             Clear
           </button>
@@ -45,33 +45,33 @@ export default function Search() {
       </div>
 
       {error && (
-        <div className="px-4 py-3 mb-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+        <div className="px-4 py-3 mb-4 bg-red-500/10 border border-red-500/30 text-red-600 rounded-lg">
           {getErrorMessage(error)}
         </div>
       )}
 
       {isLoading && (
-        <div className="text-sm text-zinc-500">Searching...</div>
+        <div className="text-sm text-slate-500">Searching...</div>
       )}
 
       {showEmptyState && (
-        <div className="text-sm text-zinc-500">
+        <div className="text-sm text-slate-500">
           Type at least 2 characters to search.
         </div>
       )}
 
       {showNoResults && (
-        <div className="text-sm text-zinc-500">
+        <div className="text-sm text-slate-500">
           No businesses match "{debounced}".
         </div>
       )}
 
       {results && results.length > 0 && (
         <>
-          <div className="text-xs text-zinc-500 mb-3">
+          <div className="text-xs text-slate-500 mb-3">
             {results.length} result{results.length === 1 ? "" : "s"}
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="joined-grid grid-cols-2">
             {results.map((b) => (
               <SearchResultCard key={b.id} business={b} />
             ))}
@@ -91,15 +91,15 @@ function SearchResultCard({ business: b }) {
     .toUpperCase();
 
   const tierColors = {
-    unverified: "bg-zinc-800 text-zinc-500",
-    basic: "bg-blue-500/10 text-blue-400",
-    verified: "bg-emerald-500/10 text-emerald-400",
+    unverified: "bg-slate-100 text-slate-500",
+    basic: "bg-indigo-50 text-indigo-700",
+    verified: "bg-emerald-500/10 text-emerald-700",
   };
 
   return (
     <Link
       to={`/dashboard/businesses/${b.id}`}
-      className="block p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
+      className="joined-cell block p-5 transition-colors hover:bg-slate-50"
     >
       <div className="flex items-start gap-4">
         {b.logo_url ? (
@@ -110,26 +110,26 @@ function SearchResultCard({ business: b }) {
             className="w-12 h-12 rounded-lg object-contain bg-white p-1 flex-shrink-0"
           />
         ) : (
-          <div className="w-12 h-12 rounded-lg bg-zinc-800 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+          <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-semibold flex-shrink-0">
             {initials}
           </div>
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-zinc-100 truncate">
+            <h3 className="font-semibold text-slate-900 truncate">
               {b.company_name}
             </h3>
             {b.is_external && (
-              <span className="text-xs px-1.5 py-0.5 bg-zinc-800 text-zinc-500 rounded">
+              <span className="text-xs px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">
                 Imported
               </span>
             )}
           </div>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-slate-500 mt-1">
             {b.sector || "—"} {b.city ? `· ${b.city}` : ""}
           </p>
           <div className="flex items-center justify-between mt-3">
-            <span className="text-sm text-zinc-400">
+            <span className="text-sm text-slate-500">
               {b.funding_ask
                 ? `₹${Number(b.funding_ask).toLocaleString("en-IN")}`
                 : "—"}

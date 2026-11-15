@@ -1,19 +1,19 @@
 const TIER_INFO = {
   unverified: {
     label: "Unverified",
-    color: "bg-zinc-800 text-zinc-400 border-zinc-700",
+    color: "bg-slate-100 text-slate-500 border-slate-200",
     description: "Upload a document to earn the Basic badge",
     next: "basic",
   },
   basic: {
     label: "Basic — Verified",
-    color: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+    color: "bg-indigo-50 text-indigo-700 border-indigo-200",
     description: "Upload a second document to reach Verified",
     next: "verified",
   },
   verified: {
     label: "Verified",
-    color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+    color: "bg-emerald-50 text-emerald-700 border-emerald-200",
     description: "Two documents agree on your company name. You're fully verified.",
     next: null,
   },

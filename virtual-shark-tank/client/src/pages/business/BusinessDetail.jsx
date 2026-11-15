@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Sparkles } from "lucide-react";
 import { api, getErrorMessage } from "../../lib/api";
 
 const SECTIONS = ["about", "funding", "traction", "team", "social", "products", "risks"];
@@ -19,33 +20,33 @@ export default function BusinessDetail() {
     enabled: !!businessId,
   });
 
-  if (isLoading) return <div className="p-8 text-zinc-500">Loading...</div>;
-  if (error) return <div className="p-8 text-red-400">{getErrorMessage(error)}</div>;
-  if (!business) return <div className="p-8 text-zinc-500">Not found</div>;
+  if (isLoading) return <div className="p-8 text-slate-500">Loading...</div>;
+  if (error) return <div className="p-8 text-red-600">{getErrorMessage(error)}</div>;
+  if (!business) return <div className="p-8 text-slate-500">Not found</div>;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <Link to="/dashboard/businesses" className="text-sm text-zinc-500 hover:text-zinc-300 mb-4 inline-block">
+      <Link to="/dashboard/businesses" className="text-sm text-slate-500 hover:text-slate-700 mb-4 inline-block">
         ← Back to businesses
       </Link>
 
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-zinc-100">{business.companyName}</h1>
-        <p className="text-sm text-zinc-500 mt-1">
+        <h1 className="text-2xl font-semibold text-slate-900">{business.companyName}</h1>
+        <p className="text-sm text-slate-500 mt-1">
           {business.sector || "—"} · {business.city || "—"} ·{" "}
           {business.companyStatus || business.company_status || "—"}
         </p>
       </div>
 
-      <div className="flex gap-2 mb-6 border-b border-zinc-800">
+      <div className="flex gap-2 mb-6 border-b border-slate-200 overflow-x-auto">
         {["profile", "pitches", "documents", "history"].map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm capitalize border-b-2 -mb-px transition-colors ${
               activeTab === tab
-                ? "border-brand text-zinc-100"
-                : "border-transparent text-zinc-500 hover:text-zinc-300"
+                ? "border-slate-900 text-slate-900"
+                : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
             {tab}
@@ -149,16 +150,19 @@ function ProfileTab({ business, businessId }) {
   };
 
   return (
-    <div className="space-y-6" key={business.updatedAt || Date.now()}>
-      
-      {/* AI Magic Block */}
-      <div className="p-5 bg-gradient-to-r from-brand/20 to-purple-500/20 border border-brand/30 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div key={business.updatedAt || Date.now()}>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        {/* AI Magic Block */}
+        <div className="flex flex-col gap-4 border-b border-slate-200 bg-gradient-to-r from-indigo-100 via-white to-white p-5 md:flex-row md:items-center md:justify-between">
         <div className="flex-1">
-          <h3 className="text-sm font-semibold text-white">✨ Auto-fill with AI</h3>
-          <p className="text-xs text-zinc-300 mt-1 max-w-md">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Sparkles className="h-4 w-4 text-orange-600" />
+            Auto-fill with AI
+          </h3>
+          <p className="text-xs text-slate-700 mt-1 max-w-md">
             We'll read your website and draft your description, tagline, business model, and products.
           </p>
-          {draftError && <p className="text-xs text-red-400 mt-2">{draftError}</p>}
+          {draftError && <p className="text-xs text-red-600 mt-2">{draftError}</p>}
           
           <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 max-w-sm">
             <input
@@ -166,10 +170,10 @@ function ProfileTab({ business, businessId }) {
               value={aiUrl}
               onChange={(e) => setAiUrl(e.target.value)}
               placeholder="https://yourcompany.com"
-              className="flex-1 px-3 py-1.5 bg-zinc-950/50 border border-zinc-700/50 rounded-lg text-zinc-200 text-sm outline-none focus:border-brand disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 text-sm outline-none transition-colors focus:border-indigo-400 focus:ring-[3px] focus:ring-indigo-100 disabled:opacity-50"
               disabled={isDrafting || !!aiFile}
             />
-            <span className="text-xs text-zinc-400 text-center">OR</span>
+            <span className="text-xs text-slate-500 text-center">OR</span>
             <input
               ref={aiFileInputRef}
               type="file"
@@ -179,7 +183,7 @@ function ProfileTab({ business, businessId }) {
                 setAiFile(file);
                 if (file) setAiUrl("");
               }}
-              className="flex-1 text-xs text-zinc-400 file:mr-2 file:px-2 file:py-1.5 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-xs file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+              className="flex-1 text-xs text-slate-500 file:mr-2 file:px-2 file:py-1.5 file:bg-slate-100 file:text-slate-900 file:border-0 file:rounded-lg file:text-xs file:font-medium file:cursor-pointer hover:file:bg-slate-200 disabled:opacity-50"
               disabled={isDrafting}
             />
             {aiFile && (
@@ -190,7 +194,7 @@ function ProfileTab({ business, businessId }) {
                   setAiUrl(business.websiteUrl || "");
                   if (aiFileInputRef.current) aiFileInputRef.current.value = "";
                 }}
-                className="px-2 py-1.5 text-xs text-zinc-400 hover:text-red-400 border border-zinc-700/50 rounded-lg"
+                className="px-2 py-1.5 text-xs text-slate-500 hover:text-red-600 border border-slate-300 rounded-lg"
                 title="Remove file"
               >
                 ×
@@ -202,43 +206,48 @@ function ProfileTab({ business, businessId }) {
         <button
           onClick={handleAiDraft}
           disabled={isDrafting || previewDrafts}
-          className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
+          className="btn-accent whitespace-nowrap"
         >
           {isDrafting && !previewDrafts ? (
             <>
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-900/30 border-t-slate-900" />
               Scanning...
             </>
           ) : (
-            "Auto-fill"
+            <>
+              <Sparkles className="h-4 w-4" />
+              Auto-fill
+            </>
           )}
         </button>
       </div>
 
-      <MediaSection business={business} businessId={businessId} />
-      <AboutSection business={business} businessId={businessId} />
-      <FundingSection business={business} businessId={businessId} />
-      <TractionSection business={business} businessId={businessId} />
-      <TeamSection business={business} businessId={businessId} />
-      <SocialSection business={business} businessId={businessId} />
-      <ProductsSection business={business} businessId={businessId} />
-      <RisksSection business={business} businessId={businessId} />
+        <div className="divide-y divide-slate-200">
+          <MediaSection business={business} businessId={businessId} />
+          <AboutSection business={business} businessId={businessId} />
+          <FundingSection business={business} businessId={businessId} />
+          <TractionSection business={business} businessId={businessId} />
+          <TeamSection business={business} businessId={businessId} />
+          <SocialSection business={business} businessId={businessId} />
+          <ProductsSection business={business} businessId={businessId} />
+          <RisksSection business={business} businessId={businessId} />
+        </div>
 
-      {/* Profile status section */}
-      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+        {/* Profile status section */}
+        <section className="border-t border-slate-200 bg-slate-50 p-6 sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1">
+            <h2 className="overline mb-1">
               Profile status
             </h2>
-            <p className="text-sm text-zinc-500 mt-1">
+            <p className="text-sm text-slate-500 mt-1">
               {isComplete
                 ? "Your profile is marked complete. You can publish pitches."
                 : "Fill in the sections above, then mark your profile complete to unlock pitch publishing."}
             </p>
           </div>
           {isComplete ? (
-            <span className="px-3 py-1.5 text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg whitespace-nowrap">
+            <span className="badge-success px-3 py-1.5 text-sm whitespace-nowrap">
               ✓ Complete
             </span>
           ) : (
@@ -248,50 +257,51 @@ function ProfileTab({ business, businessId }) {
             />
           )}
         </div>
-      </section>
+        </section>
+      </div>
 
       {/* ─── DRAFTS REVIEW MODAL ─── */}
       {previewDrafts && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setPreviewDrafts(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-6" onClick={() => setPreviewDrafts(null)}>
           <div 
-            className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl"
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-white border border-slate-200 rounded-xl shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-6 border-b border-zinc-800">
-              <h2 className="text-xl font-semibold text-zinc-100">Review AI Drafts</h2>
-              <p className="text-sm text-zinc-500 mt-1">
+            <div className="p-6 border-b border-slate-200">
+              <h2 className="text-xl font-semibold text-slate-900">Review AI Drafts</h2>
+              <p className="text-sm text-slate-500 mt-1">
                 Here's what we found on your website. Click Apply to save these to your profile.
               </p>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 flex-1">
               {Object.entries(previewDrafts).map(([key, draft]) => (
-                <div key={key} className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+                <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-zinc-300 capitalize">
+                    <label className="text-sm font-medium text-slate-700 capitalize">
                       {key.replace(/([A-Z])/g, ' $1').trim()}
                     </label>
                     <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                      draft.source === 'llm' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'
+                      draft.source === 'llm' ? 'bg-orange-100 text-orange-700' : 'bg-indigo-50 text-indigo-700'
                     }`}>
-                      {draft.source === 'llm' ? '✨ AI Draft' : '⟳ Website Data'}
+                      {draft.source === 'llm' ? 'AI Draft' : 'Website Data'}
                     </span>
                   </div>
                   <textarea
                     value={Array.isArray(draft.value) ? draft.value.join(", ") : draft.value}
                     readOnly
                     rows={2}
-                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-300 text-sm outline-none"
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-slate-700 text-sm outline-none"
                   />
                 </div>
               ))}
             </div>
 
-            <div className="p-6 border-t border-zinc-800 flex justify-end gap-3">
-              <button onClick={() => setPreviewDrafts(null)} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100">
+            <div className="p-6 border-t border-slate-200 flex justify-end gap-3">
+              <button onClick={() => setPreviewDrafts(null)} className="btn-ghost">
                 Cancel
               </button>
-              <button onClick={applyDrafts} disabled={isDrafting} className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              <button onClick={applyDrafts} disabled={isDrafting} className="btn-primary">
                 {isDrafting ? "Saving..." : "Apply to Profile"}
               </button>
             </div>
@@ -303,24 +313,22 @@ function ProfileTab({ business, businessId }) {
 }
 function EditableSection({ title, children, onSave, saving, saved, error }) {
   return (
-    <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+    <section className="bg-white p-6 sm:p-7">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
-          {title}
-        </h2>
+        <h2 className="overline">{title}</h2>
         <div className="flex items-center gap-2">
-          {saved && <span className="text-xs text-emerald-400">Saved ✓</span>}
+          {saved && <span className="text-xs font-medium text-emerald-700">Saved ✓</span>}
           <button
             onClick={onSave}
             disabled={saving}
-            className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg font-medium disabled:opacity-50"
+            className="btn-primary btn-sm"
           >
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>
       {error && (
-        <div className="mb-4 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
+        <div className="alert-danger mb-4 px-3 py-2 text-xs">
           {error}
         </div>
       )}
@@ -332,14 +340,14 @@ function EditableSection({ title, children, onSave, saving, saved, error }) {
 function Field({ label, children, hint }) {
   return (
     <label className="block">
-      <span className="text-xs text-zinc-500 mb-1.5 block">{label}</span>
+      <span className="label">{label}</span>
       {children}
-      {hint && <span className="text-xs text-zinc-600 mt-1 block">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
     </label>
   );
 }
 
-const INPUT = "w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand text-sm";
+const INPUT = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-colors focus:border-indigo-400 focus:ring-[3px] focus:ring-indigo-100";
 
 // ─── About ────────────────────────────────────────────────────
 
@@ -445,7 +453,7 @@ function FundingSection({ business, businessId }) {
 
   return (
     <EditableSection title="Funding" onSave={save} saving={saving} saved={saved} error={error}>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Funding ask (₹)">
           <input type="number" value={form.fundingAsk} onChange={(e) => setForm({ ...form, fundingAsk: e.target.value })} className={INPUT} placeholder="5000000" />
         </Field>
@@ -462,39 +470,39 @@ function FundingSection({ business, businessId }) {
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-zinc-500">Use of funds</span>
-          <button onClick={addFund} className="text-xs text-brand hover:text-brand-hover">+ Add item</button>
+          <span className="text-xs text-slate-500">Use of funds</span>
+          <button onClick={addFund} className="text-xs text-slate-900 hover:text-slate-600">+ Add item</button>
         </div>
         <div className="space-y-2">
           {form.useOfFunds.map((u, i) => (
-            <div key={i} className="flex gap-2 items-start">
+            <div key={i} className="flex flex-col gap-2 sm:flex-row sm:items-start">
               <input value={u.category} onChange={(e) => updateFund(i, "category", e.target.value)} placeholder="Category" className={INPUT + " flex-1"} />
-              <input type="number" value={u.pct} onChange={(e) => updateFund(i, "pct", e.target.value)} placeholder="%" className={INPUT + " w-20"} min="0" max="100" />
+              <input type="number" value={u.pct} onChange={(e) => updateFund(i, "pct", e.target.value)} placeholder="%" className={INPUT + " w-full sm:w-20"} min="0" max="100" />
               <input value={u.description || ""} onChange={(e) => updateFund(i, "description", e.target.value)} placeholder="Details (optional)" className={INPUT + " flex-1"} />
-              <button onClick={() => removeFund(i)} className="text-zinc-600 hover:text-red-400 px-2 py-2">×</button>
+              <button onClick={() => removeFund(i)} className="text-slate-400 hover:text-red-600 px-2 py-2">×</button>
             </div>
           ))}
           {form.useOfFunds.length === 0 && (
-            <p className="text-xs text-zinc-600">No items yet</p>
+            <p className="text-xs text-slate-400">No items yet</p>
           )}
         </div>
       </div>
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-zinc-500">Planned milestones</span>
-          <button onClick={addMilestone} className="text-xs text-brand hover:text-brand-hover">+ Add milestone</button>
+          <span className="text-xs text-slate-500">Planned milestones</span>
+          <button onClick={addMilestone} className="text-xs text-slate-900 hover:text-slate-600">+ Add milestone</button>
         </div>
         <div className="space-y-2">
           {form.plannedMilestones.map((m, i) => (
-            <div key={i} className="flex gap-2 items-start">
-              <input type="number" value={m.months} onChange={(e) => updateMilestone(i, "months", e.target.value)} placeholder="Months" className={INPUT + " w-24"} min="1" />
+            <div key={i} className="flex flex-col gap-2 sm:flex-row sm:items-start">
+              <input type="number" value={m.months} onChange={(e) => updateMilestone(i, "months", e.target.value)} placeholder="Months" className={INPUT + " w-full sm:w-24"} min="1" />
               <input value={m.milestone} onChange={(e) => updateMilestone(i, "milestone", e.target.value)} placeholder="e.g. 5 clinics, ₹8 Cr revenue" className={INPUT + " flex-1"} />
-              <button onClick={() => removeMilestone(i)} className="text-zinc-600 hover:text-red-400 px-2 py-2">×</button>
+              <button onClick={() => removeMilestone(i)} className="text-slate-400 hover:text-red-600 px-2 py-2">×</button>
             </div>
           ))}
           {form.plannedMilestones.length === 0 && (
-            <p className="text-xs text-zinc-600">No milestones yet</p>
+            <p className="text-xs text-slate-400">No milestones yet</p>
           )}
         </div>
       </div>
@@ -540,7 +548,7 @@ function TractionSection({ business, businessId }) {
 
   return (
     <EditableSection title="Traction" onSave={save} saving={saving} saved={saved} error={error}>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Revenue range" hint="e.g. 3-5 Cr, 50L-1Cr, pre-revenue">
           <input value={form.revenueRange} onChange={update("revenueRange")} className={INPUT} placeholder="e.g. 3-5 Cr" />
         </Field>
@@ -601,7 +609,7 @@ function TeamSection({ business, businessId }) {
 
   return (
     <EditableSection title="Team" onSave={save} saving={saving} saved={saved} error={error}>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Employee count">
           <input type="number" value={form.employee_count} onChange={(e) => setForm({ ...form, employee_count: e.target.value })} className={INPUT} min="0" />
         </Field>
@@ -731,14 +739,14 @@ function MediaSection({ business, businessId }) {
       saved={saved}
       error={error}
     >
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Company logo" hint="Square image, PNG or JPG">
           <div className="space-y-2">
             {logoUrl && (
               <img
                 src={logoUrl}
                 alt="Company logo"
-                className="w-20 h-20 object-contain bg-zinc-950 border border-zinc-800 rounded-lg"
+                className="w-20 h-20 object-contain bg-slate-50 border border-slate-200 rounded-lg"
               />
             )}
             <input
@@ -750,10 +758,10 @@ function MediaSection({ business, businessId }) {
                 e.target.value = "";
               }}
               disabled={!!uploading}
-              className="w-full text-sm text-zinc-400 file:mr-3 file:px-3 file:py-2 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+              className="w-full text-sm text-slate-500 file:mr-3 file:px-3 file:py-2 file:bg-slate-100 file:text-slate-900 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-slate-200 disabled:opacity-50"
             />
             {uploading === "logoUrl" && (
-              <span className="text-xs text-zinc-400">Uploading logo...</span>
+              <span className="text-xs text-slate-500">Uploading logo...</span>
             )}
           </div>
         </Field>
@@ -764,7 +772,7 @@ function MediaSection({ business, businessId }) {
               <img
                 src={coverImageUrl}
                 alt="Cover"
-                className="w-full h-20 object-cover bg-zinc-950 border border-zinc-800 rounded-lg"
+                className="w-full h-20 object-cover bg-slate-50 border border-slate-200 rounded-lg"
               />
             )}
             <input
@@ -776,10 +784,10 @@ function MediaSection({ business, businessId }) {
                 e.target.value = "";
               }}
               disabled={!!uploading}
-              className="w-full text-sm text-zinc-400 file:mr-3 file:px-3 file:py-2 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-zinc-700 disabled:opacity-50"
+              className="w-full text-sm text-slate-500 file:mr-3 file:px-3 file:py-2 file:bg-slate-100 file:text-slate-900 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-slate-200 disabled:opacity-50"
             />
             {uploading === "coverImageUrl" && (
-              <span className="text-xs text-zinc-400">Uploading cover image...</span>
+              <span className="text-xs text-slate-500">Uploading cover image...</span>
             )}
           </div>
         </Field>
@@ -899,13 +907,13 @@ function PitchesTab({ business, businessId }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       {!isProfileComplete && (
-        <div className="p-5 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+        <div className="border-b border-amber-200 bg-amber-50 p-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-sm font-semibold text-amber-400">Profile incomplete</h3>
-              <p className="text-sm text-amber-300/80 mt-1">
+              <h3 className="text-sm font-semibold text-amber-800">Profile incomplete</h3>
+              <p className="mt-1 text-sm text-amber-800">
                 Complete your profile and mark it complete before publishing a pitch.
               </p>
             </div>
@@ -915,28 +923,28 @@ function PitchesTab({ business, businessId }) {
       )}
 
       {isProfileComplete && (
-        <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl flex items-center justify-between">
-          <span className="text-sm text-emerald-400">✓ Profile marked complete</span>
+        <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 p-4">
+          <span className="text-sm text-emerald-700">Profile marked complete</span>
         </div>
       )}
 
-      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+      <section className="p-6 sm:p-7">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+          <h2 className="overline">
             Pitches
           </h2>
           <button
             onClick={() => setModalState("new")}
-            className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg font-medium"
+            className="btn-primary btn-sm"
           >
             + New pitch
           </button>
         </div>
 
-        {isLoading && <p className="text-sm text-zinc-500">Loading...</p>}
+        {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 
         {!isLoading && (!pitches || pitches.length === 0) && (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-slate-500">
             No pitches yet. Create one to start raising.
           </p>
         )}
@@ -992,11 +1000,11 @@ function CompleteButton({ businessId, onSuccess }) {
       <button
         onClick={complete}
         disabled={loading}
-        className="px-3 py-1.5 text-sm bg-brand hover:bg-brand-hover rounded-lg font-medium disabled:opacity-50 whitespace-nowrap"
+        className="btn-primary btn-sm whitespace-nowrap"
       >
         {loading ? "Marking..." : "Mark complete"}
       </button>
-      {error && <span className="text-xs text-red-400">{error}</span>}
+      {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   );
 }
@@ -1008,11 +1016,11 @@ function PitchCard({ pitch, onRefresh, onEdit }) {
   const [error, setError] = useState("");
 
   const STATUS_COLOR = {
-    draft: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    live: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-    closed: "bg-zinc-800 text-zinc-500 border-zinc-700",
-    funded: "bg-blue-500/10 text-blue-400 border-blue-500/30",
-    withdrawn: "bg-zinc-800 text-zinc-500 border-zinc-700",
+    draft: "bg-slate-100 text-slate-500 border-slate-300",
+    live: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
+    closed: "bg-slate-100 text-slate-500 border-slate-300",
+    funded: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    withdrawn: "bg-slate-100 text-slate-500 border-slate-300",
   };
 
   const publish = async () => {
@@ -1060,17 +1068,17 @@ function PitchCard({ pitch, onRefresh, onEdit }) {
   };
 
   return (
-    <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-lg">
+    <div className="p-5 bg-slate-50 border border-slate-200 rounded-lg">
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-medium text-zinc-100">{pitch.title}</h3>
+            <h3 className="text-base font-medium text-slate-900">{pitch.title}</h3>
             <span className={`text-xs px-2 py-0.5 rounded border ${STATUS_COLOR[pitch.status] || STATUS_COLOR.draft}`}>
               {pitch.status}
             </span>
           </div>
           {pitch.tagline && (
-            <p className="text-sm text-zinc-500 mt-1">{pitch.tagline}</p>
+            <p className="text-sm text-slate-500 mt-1">{pitch.tagline}</p>
           )}
         </div>
         <div className="flex gap-2">
@@ -1078,21 +1086,21 @@ function PitchCard({ pitch, onRefresh, onEdit }) {
             <>
               <button
                 onClick={() => onEdit(pitch)}
-                className="px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-100 border border-zinc-700 rounded-lg"
+                className="btn-secondary btn-sm"
               >
                 Edit
               </button>
               <button
                 onClick={publish}
                 disabled={busy === "publish"}
-                className="px-3 py-1.5 text-xs bg-brand hover:bg-brand-hover rounded-lg font-medium disabled:opacity-50"
+                className="btn-primary btn-sm"
               >
                 {busy === "publish" ? "Publishing..." : "Publish"}
               </button>
               <button
                 onClick={remove}
                 disabled={busy === "delete"}
-                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-500/30 rounded-lg disabled:opacity-50"
+                className="btn-danger btn-sm"
               >
                 Delete
               </button>
@@ -1102,7 +1110,7 @@ function PitchCard({ pitch, onRefresh, onEdit }) {
             <button
               onClick={close}
               disabled={busy === "close"}
-              className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg disabled:opacity-50"
+              className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg disabled:opacity-50"
             >
               {busy === "close" ? "Closing..." : "Close pitch"}
             </button>
@@ -1110,27 +1118,27 @@ function PitchCard({ pitch, onRefresh, onEdit }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 pt-3 border-t border-zinc-800 text-sm">
+      <div className="grid grid-cols-1 gap-3 pt-3 border-t border-slate-200 text-sm sm:grid-cols-3 sm:gap-4">
         <div>
-          <div className="text-xs text-zinc-600">Ask</div>
-          <div className="text-zinc-200 font-medium mt-0.5">
+          <div className="text-xs text-slate-400">Ask</div>
+          <div className="text-slate-800 font-medium mt-0.5">
             ₹{Number(pitch.askAmount).toLocaleString("en-IN")}
           </div>
         </div>
         <div>
-          <div className="text-xs text-zinc-600">Equity</div>
-          <div className="text-zinc-200 font-medium mt-0.5">{pitch.equityOffered}%</div>
+          <div className="text-xs text-slate-400">Equity</div>
+          <div className="text-slate-800 font-medium mt-0.5">{pitch.equityOffered}%</div>
         </div>
         <div>
-          <div className="text-xs text-zinc-600">Valuation</div>
-          <div className="text-zinc-200 font-medium mt-0.5">
+          <div className="text-xs text-slate-400">Valuation</div>
+          <div className="text-slate-800 font-medium mt-0.5">
             ₹{Number(pitch.valuation || 0).toLocaleString("en-IN")}
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="mt-3 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
+        <div className="mt-3 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-600 rounded">
           {error}
         </div>
       )}
@@ -1199,15 +1207,15 @@ function PitchFormModal({ businessId, pitch, onClose, onSuccess }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-6"
       onClick={onClose}
     >
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
-        className="w-full max-w-2xl flex flex-col gap-4 p-8 bg-zinc-900 border border-zinc-800 rounded-xl max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-2xl flex flex-col gap-4 p-8 bg-white border border-slate-200 rounded-xl max-h-[90vh] overflow-y-auto"
       >
-        <h2 className="text-xl font-semibold text-zinc-100">
+        <h2 className="text-xl font-semibold text-slate-900">
           {isEdit ? "Edit pitch" : "New pitch"}
         </h2>
 
@@ -1227,7 +1235,7 @@ function PitchFormModal({ businessId, pitch, onClose, onSuccess }) {
           <textarea value={form.longSummary} onChange={update("longSummary")} rows={5} className={INPUT} placeholder="Our founding story, the problem we solve, our traction, and how we'll deploy this round..." />
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Ask amount (₹) *">
             <input type="number" value={form.askAmount} onChange={update("askAmount")} className={INPUT} required min="1" />
           </Field>
@@ -1235,7 +1243,7 @@ function PitchFormModal({ businessId, pitch, onClose, onSuccess }) {
             <input type="number" value={form.equityOffered} onChange={update("equityOffered")} className={INPUT} required min="0.1" max="100" step="0.1" />
           </Field>
         </div>
-<div className="grid grid-cols-2 gap-4">
+<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
   <Field label="Stage *" hint="What phase is the business in?">
     <select value={form.stage} onChange={update("stage")} className={INPUT} required>
       <option value="">Select...</option>
@@ -1260,9 +1268,9 @@ function PitchFormModal({ businessId, pitch, onClose, onSuccess }) {
 </div>
 
         {valuation && (
-          <div className="px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-lg text-sm">
-            <span className="text-zinc-500">Implied valuation:</span>{" "}
-            <span className="text-zinc-200 font-medium">₹{valuation.toLocaleString("en-IN")}</span>
+          <div className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+            <span className="text-slate-500">Implied valuation:</span>{" "}
+            <span className="text-slate-800 font-medium">₹{valuation.toLocaleString("en-IN")}</span>
           </div>
         )}
 
@@ -1275,16 +1283,16 @@ function PitchFormModal({ businessId, pitch, onClose, onSuccess }) {
         </Field>
 
         {error && (
-          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-600 rounded-lg">
             {error}
           </div>
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg">
+          <button type="button" onClick={onClose} className="btn-secondary">
             Cancel
           </button>
-          <button type="submit" disabled={saving} className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50">
+          <button type="submit" disabled={saving} className="btn-primary">
             {saving ? "Saving..." : isEdit ? "Save changes" : "Create draft"}
           </button>
         </div>
@@ -1368,10 +1376,10 @@ function DocumentsTab({ business, businessId }) {
   };
 
   const STATUS_STYLE = {
-    verified: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-    pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-    needs_review: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-    rejected: "bg-red-500/10 text-red-400 border-red-500/30",
+    verified: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
+    pending: "bg-amber-500/10 text-amber-700 border-amber-500/30",
+    needs_review: "bg-amber-500/10 text-amber-700 border-amber-500/30",
+    rejected: "bg-red-500/10 text-red-600 border-red-500/30",
   };
 
   const TYPE_LABEL = {
@@ -1381,19 +1389,19 @@ function DocumentsTab({ business, businessId }) {
   };
 
   return (
-    <div className="space-y-6">
-      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white divide-y divide-slate-200">
+      <section className="p-6 sm:p-7">
+        <h2 className="overline mb-4">
           Upload a document
         </h2>
 
         {error && (
-          <div className="mb-4 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
+          <div className="mb-4 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-600 rounded">
             {error}
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
           <Field label="Document type">
             <select
               value={documentType}
@@ -1413,28 +1421,28 @@ function DocumentsTab({ business, businessId }) {
               accept="image/jpeg,image/png,image/webp,application/pdf"
               onChange={handleFile}
               disabled={uploading}
-              className="w-full text-sm text-zinc-400 file:mr-3 file:px-3 file:py-2 file:bg-zinc-800 file:text-zinc-100 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-zinc-700"
+              className="w-full text-sm text-slate-500 file:mr-3 file:px-3 file:py-2 file:bg-slate-100 file:text-slate-900 file:border-0 file:rounded-lg file:text-sm file:font-medium file:cursor-pointer hover:file:bg-slate-200"
             />
           </Field>
         </div>
 
         {uploading && (
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-            <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <span className="w-2 h-2 rounded-full bg-slate-900 animate-pulse" />
             Uploading and running OCR... this takes 3–5 seconds
           </div>
         )}
       </section>
 
-      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+      <section className="p-6 sm:p-7">
+        <h2 className="overline mb-4">
           Uploaded documents
         </h2>
 
-        {isLoading && <p className="text-sm text-zinc-500">Loading...</p>}
+        {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 
         {!isLoading && (!verifications || verifications.length === 0) && (
-          <p className="text-sm text-zinc-500">No documents uploaded yet.</p>
+          <p className="text-sm text-slate-500">No documents uploaded yet.</p>
         )}
 
         <div className="space-y-3">
@@ -1448,11 +1456,11 @@ function DocumentsTab({ business, businessId }) {
               : [];
 
             return (
-              <div key={v._id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-lg">
+              <div key={v._id} className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-zinc-200">
+                      <span className="text-sm font-medium text-slate-800">
                         {TYPE_LABEL[v.documentType] || v.documentType}
                       </span>
                       <span
@@ -1463,7 +1471,7 @@ function DocumentsTab({ business, businessId }) {
                         {v.status}
                       </span>
                     </div>
-                    <div className="text-xs text-zinc-500 mt-1">
+                    <div className="text-xs text-slate-500 mt-1">
                       Uploaded {new Date(v.createdAt).toLocaleDateString()}
                       {v.confidenceScore != null &&
                         ` · Confidence ${Math.round(v.confidenceScore * 100)}%`}
@@ -1474,7 +1482,7 @@ function DocumentsTab({ business, businessId }) {
                     <button
                       onClick={() => applyVerification(v)}
                       disabled={applying === v._id}
-                      className="px-3 py-1.5 text-xs bg-brand hover:bg-brand-hover rounded-lg font-medium disabled:opacity-50 whitespace-nowrap"
+                      className="btn-primary btn-sm whitespace-nowrap"
                     >
                       {applying === v._id ? "Applying..." : "Apply to profile"}
                     </button>
@@ -1482,24 +1490,24 @@ function DocumentsTab({ business, businessId }) {
                 </div>
 
                 {fields.length > 0 && (
-                  <div className="pt-3 border-t border-zinc-800 space-y-1">
+                  <div className="pt-3 border-t border-slate-200 space-y-1">
                     {fields.map(([name, field]) => (
                       <div key={name} className="flex items-center justify-between text-xs">
-                        <span className="text-zinc-500 font-mono">{name}</span>
+                        <span className="text-slate-500 font-mono">{name}</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-zinc-300">
+                          <span className="text-slate-700">
                             {field?.value ?? "—"}
                           </span>
                           {field?.formatValid === true && (
-                            <span className="text-emerald-400">✓</span>
+                            <span className="text-emerald-700">✓</span>
                           )}
                           {field?.formatValid === false && (
-                            <span className="text-red-400" title={field.formatReason}>
+                            <span className="text-red-600" title={field.formatReason}>
                               ✗
                             </span>
                           )}
                           {field?.confidence != null && (
-                            <span className="text-zinc-600">
+                            <span className="text-slate-400">
                               {Math.round(field.confidence * 100)}%
                             </span>
                           )}
@@ -1510,7 +1518,7 @@ function DocumentsTab({ business, businessId }) {
                 )}
 
                 {v.errorMessage && (
-                  <div className="mt-3 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-400 rounded">
+                  <div className="mt-3 px-3 py-2 text-xs bg-red-500/10 border border-red-500/30 text-red-600 rounded">
                     {v.errorMessage}
                   </div>
                 )}
@@ -1520,24 +1528,24 @@ function DocumentsTab({ business, businessId }) {
         </div>
       </section>
 
-      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+      <section className="p-6 sm:p-7">
+        <h2 className="overline mb-3">
           Verification tier
         </h2>
         <div className="flex items-center gap-3">
           <span className={`text-xs px-2 py-1 rounded border ${
             business.verificationTier === "verified"
-              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+              ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30"
               : business.verificationTier === "basic"
-              ? "bg-blue-500/10 text-blue-400 border-blue-500/30"
-              : "bg-zinc-800 text-zinc-400 border-zinc-700"
+              ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+              : "bg-slate-100 text-slate-500 border-slate-300"
           }`}>
             {business.verificationTier || "unverified"}
           </span>
         </div>
-        <p className="text-xs text-zinc-500 mt-3">
-          Tier <strong className="text-zinc-400">basic</strong> requires 1+ verified document.
-          Tier <strong className="text-zinc-400">verified</strong> requires 2+ verified documents
+        <p className="text-xs text-slate-500 mt-3">
+          Tier <strong className="text-slate-500">basic</strong> requires 1+ verified document.
+          Tier <strong className="text-slate-500">verified</strong> requires 2+ verified documents
           that agree on the legal entity name. Two documents that disagree stay at basic.
         </p>
       </section>
@@ -1557,28 +1565,28 @@ function HistoryTab({ businessId }) {
     enabled: !!businessId,
   });
 
-  if (isLoading) return <div className="p-8 text-zinc-500">Loading...</div>;
-  if (error) return <div className="p-8 text-red-400">{getErrorMessage(error)}</div>;
+  if (isLoading) return <div className="p-8 text-slate-500">Loading...</div>;
+  if (error) return <div className="p-8 text-red-600">{getErrorMessage(error)}</div>;
   if (!history || history.length === 0) {
     return (
-      <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl text-sm text-zinc-500">
+      <div className="p-6 bg-white border border-slate-200 rounded-xl text-sm text-slate-500">
         No profile edits recorded yet. Any change to your business profile appears here.
       </div>
     );
   }
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-      <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+    <div className="bg-white border border-slate-200 rounded-xl p-6">
+      <h2 className="overline mb-4">
         Profile edit history
       </h2>
       <div className="space-y-3">
         {history.map((edit) => (
           <div
             key={edit.id}
-            className="flex items-start gap-4 pb-3 border-b border-zinc-800 last:border-0 last:pb-0"
+            className="flex items-start gap-4 pb-3 border-b border-slate-200 last:border-0 last:pb-0"
           >
-            <div className="w-32 flex-shrink-0 text-xs text-zinc-600">
+            <div className="w-32 flex-shrink-0 text-xs text-slate-400">
               {new Date(edit.changedAt || edit.changed_at).toLocaleString(undefined, {
                 month: "short",
                 day: "numeric",
@@ -1587,37 +1595,37 @@ function HistoryTab({ businessId }) {
               })}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm text-zinc-300">
+              <div className="text-sm text-slate-700">
                 <span className="font-medium">{edit.fieldName || edit.field_name}</span>{" "}
                 changed
               </div>
-              <div className="text-xs text-zinc-500 mt-1 space-y-0.5">
+              <div className="text-xs text-slate-500 mt-1 space-y-0.5">
                 {edit.oldValue || edit.old_value ? (
                   <>
                     <div>
-                      <span className="text-red-400/70">From:</span>{" "}
-                      <span className="line-through text-zinc-600">
+                      <span className="text-red-600/70">From:</span>{" "}
+                      <span className="line-through text-slate-400">
                         {edit.oldValue || edit.old_value}
                       </span>
                     </div>
                     <div>
-                      <span className="text-emerald-400/70">To:</span>{" "}
-                      <span className="text-zinc-300">
+                      <span className="text-emerald-700/70">To:</span>{" "}
+                      <span className="text-slate-700">
                         {edit.newValue || edit.new_value || "—"}
                       </span>
                     </div>
                   </>
                 ) : (
                   <div>
-                    <span className="text-emerald-400/70">Set:</span>{" "}
-                    <span className="text-zinc-300">
+                    <span className="text-emerald-700/70">Set:</span>{" "}
+                    <span className="text-slate-700">
                       {edit.newValue || edit.new_value || "—"}
                     </span>
                   </div>
                 )}
               </div>
             </div>
-            <div className="text-xs text-zinc-600">
+            <div className="text-xs text-slate-400">
               {edit.editedById || edit.edited_by_id ? "By user" : "System"}
             </div>
           </div>

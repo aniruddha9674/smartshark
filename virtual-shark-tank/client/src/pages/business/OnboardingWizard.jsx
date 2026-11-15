@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { Check } from "lucide-react";
 import { api, getErrorMessage } from "../../lib/api";
 import { useBusiness } from "../../hooks/useMyBusinesses";
 import SourceBadge from "../../components/business/SourceBadge";
@@ -175,8 +176,8 @@ export default function OnboardingWizard() {
 function SimpleSpinner({ message }) {
   return (
     <div className="text-center py-16">
-      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-brand" />
-      {message && <p className="mt-2 text-sm text-zinc-500">{message}</p>}
+      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-400" />
+      {message && <p className="mt-2 text-sm text-slate-500">{message}</p>}
     </div>
   );
 }
@@ -192,16 +193,16 @@ function Stepper({ steps, current }) {
           <div key={s.id} className="flex items-center flex-1">
             <div
               className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                done ? "bg-emerald-500 text-white" : active ? "bg-brand text-white" : "bg-zinc-800 text-zinc-500"
+                done ? "bg-emerald-500 text-white" : active ? "bg-primary text-white" : "bg-slate-100 text-slate-500"
               }`}
             >
               {done ? "✓" : i + 1}
             </div>
-            <span className={`ml-2 text-sm ${active ? "font-medium text-zinc-100" : "text-zinc-500"}`}>
+            <span className={`ml-2 text-sm ${active ? "font-medium text-slate-900" : "text-slate-500"}`}>
               {s.label}
             </span>
             {i < steps.length - 1 && (
-              <div className={`flex-1 h-px mx-2 ${done ? "bg-emerald-500" : "bg-zinc-800"}`} />
+              <div className={`flex-1 h-px mx-2 ${done ? "bg-emerald-500" : "bg-slate-100"}`} />
             )}
           </div>
         );
@@ -212,9 +213,9 @@ function Stepper({ steps, current }) {
 
 function StepConfirm({ form, setField, onNext }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-      <h2 className="text-xl font-semibold mb-1 text-zinc-100">Confirm your business details</h2>
-      <p className="text-sm text-zinc-500 mb-6">
+    <div className="bg-white border border-slate-200 rounded-xl p-6">
+      <h2 className="text-xl font-semibold mb-1 text-slate-900">Confirm your business details</h2>
+      <p className="text-sm text-slate-500 mb-6">
         We pulled these from the MCA registry. Correct anything that's wrong.
       </p>
       <div className="grid grid-cols-2 gap-4">
@@ -228,7 +229,7 @@ function StepConfirm({ form, setField, onNext }) {
         ))}
       </div>
       <div className="mt-6 flex justify-end">
-        <button onClick={onNext} className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg font-medium transition-colors">
+        <button onClick={onNext} className="btn-primary">
           Continue →
         </button>
       </div>
@@ -238,39 +239,39 @@ function StepConfirm({ form, setField, onNext }) {
 
 function StepFetch({ form, setField, isDrafting, draftError, onSubmit, onBack, onSkip }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-      <h2 className="text-xl font-semibold mb-1 text-zinc-100">Fetch a draft profile</h2>
-      <p className="text-sm text-zinc-500 mb-6">
+    <div className="bg-white border border-slate-200 rounded-xl p-6">
+      <h2 className="text-xl font-semibold mb-1 text-slate-900">Fetch a draft profile</h2>
+      <p className="text-sm text-slate-500 mb-6">
         We'll read your website and draft the rest of your profile. Takes ~10 seconds.
       </p>
       <div className="mb-4">
-        <label className="block text-sm font-medium mb-1 text-zinc-300">Website URL</label>
+        <label className="block text-sm font-medium mb-1 text-slate-700">Website URL</label>
         <input
           type="url"
           value={form.websiteUrl ?? ""}
           onChange={(e) => setField("websiteUrl", e.target.value)}
           placeholder="https://yourcompany.com"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 focus:outline-none focus:border-brand"
+          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-400"
           disabled={isDrafting}
         />
       </div>
       {draftError && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg">{draftError}</div>
+        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-600 text-sm rounded-lg">{draftError}</div>
       )}
       {isDrafting ? (
         <div className="py-8 text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-brand" />
-          <p className="mt-2 text-sm text-zinc-500">Reading website, drafting fields...</p>
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-400" />
+          <p className="mt-2 text-sm text-slate-500">Reading website, drafting fields...</p>
         </div>
       ) : (
         <div className="flex justify-between items-center mt-6">
-          <button onClick={onBack} className="px-4 py-2 text-zinc-400 hover:text-zinc-100 transition-colors">← Back</button>
+          <button onClick={onBack} className="btn-ghost">← Back</button>
           <div className="space-x-3">
-            <button onClick={onSkip} className="px-4 py-2 text-zinc-400 hover:text-zinc-100 transition-colors">Skip, fill manually</button>
+            <button onClick={onSkip} className="btn-ghost">Skip, fill manually</button>
             <button
               onClick={onSubmit}
               disabled={!form.websiteUrl}
-              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              className="btn-primary"
             >
               Fetch drafts →
             </button>
@@ -284,17 +285,17 @@ function StepFetch({ form, setField, isDrafting, draftError, onSubmit, onBack, o
 function StepReview({ form, setField, draftResponse, saving, saveError, onSave, onBack }) {
   const methods = draftResponse?.extractionMethods ?? {};
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-      <h2 className="text-xl font-semibold mb-1 text-zinc-100">Review your profile</h2>
-      <p className="text-sm text-zinc-500 mb-6">
+    <div className="bg-white border border-slate-200 rounded-xl p-6">
+      <h2 className="text-xl font-semibold mb-1 text-slate-900">Review your profile</h2>
+      <p className="text-sm text-slate-500 mb-6">
         Every field was drafted for you. Edit anything wrong, then save.
       </p>
       {draftResponse?.scrapeCode && (
-        <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm rounded-lg">
+        <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 text-amber-700 text-sm rounded-lg">
           Note: we couldn't read your website. Drafts are from MCA data only.
         </div>
       )}
-      <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">Story</h3>
+      <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Story</h3>
       <div className="space-y-4 mb-8">
         {DRAFTABLE_FIELDS.map((f) => (
           <DraftField
@@ -306,8 +307,8 @@ function StepReview({ form, setField, draftResponse, saving, saveError, onSave, 
           />
         ))}
       </div>
-      <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1">Ask & traction</h3>
-      <p className="text-xs text-zinc-500 mb-3">
+      <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1">Ask & traction</h3>
+      <p className="text-xs text-slate-500 mb-3">
         These are facts, not inferences. Fill them in yourself.
       </p>
       <div className="grid grid-cols-2 gap-4 mb-8">
@@ -321,14 +322,14 @@ function StepReview({ form, setField, draftResponse, saving, saveError, onSave, 
         ))}
       </div>
       {saveError && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg">{saveError}</div>
+        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-600 text-sm rounded-lg">{saveError}</div>
       )}
       <div className="flex justify-between items-center">
-        <button onClick={onBack} className="px-4 py-2 text-zinc-400 hover:text-zinc-100 transition-colors">← Back</button>
+        <button onClick={onBack} className="btn-ghost">← Back</button>
         <button
           onClick={onSave}
           disabled={saving}
-          className="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+          className="btn-primary"
         >
           {saving ? "Saving..." : "Save profile →"}
         </button>
@@ -340,16 +341,18 @@ function StepReview({ form, setField, draftResponse, saving, saveError, onSave, 
 function StepDone({ draftResponse, onDashboard }) {
   const fieldCount = Object.keys(draftResponse?.drafts ?? {}).length;
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
-      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 text-3xl mb-4">✓</div>
-      <h2 className="text-xl font-semibold mb-2 text-zinc-100">Your profile is live</h2>
-      <p className="text-sm text-zinc-500 mb-6">
+    <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+      <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+        <Check className="h-8 w-8" />
+      </div>
+      <h2 className="text-xl font-semibold mb-2 text-slate-900">Your profile is live</h2>
+      <p className="text-sm text-slate-500 mb-6">
         {fieldCount > 0
           ? `We drafted ${fieldCount} field${fieldCount === 1 ? "" : "s"} from your website and MCA record.`
           : "Your profile has been saved."}{" "}
         Investors can now find your business.
       </p>
-      <button onClick={onDashboard} className="px-6 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg font-medium transition-colors">
+      <button onClick={onDashboard} className="btn-primary">
         Go to dashboard →
       </button>
     </div>
@@ -359,14 +362,14 @@ function StepDone({ draftResponse, onDashboard }) {
 function FieldInput({ field, value, onChange }) {
   return (
     <div>
-      <label className="block text-sm font-medium mb-1 text-zinc-300">{field.label}</label>
+      <label className="block text-sm font-medium mb-1 text-slate-700">{field.label}</label>
       {field.type === "textarea" ? (
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           readOnly={field.readonly}
           rows={4}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 focus:outline-none focus:border-brand read-only:opacity-70"
+          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-400 read-only:opacity-70"
         />
       ) : (
         <input
@@ -375,7 +378,7 @@ function FieldInput({ field, value, onChange }) {
           onChange={(e) => onChange(e.target.value)}
           readOnly={field.readonly}
           placeholder={field.placeholder}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 focus:outline-none focus:border-brand read-only:opacity-70"
+          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-400 read-only:opacity-70"
         />
       )}
     </div>
@@ -386,7 +389,7 @@ function DraftField({ field, value, source, onChange }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <label className="block text-sm font-medium text-zinc-300">{field.label}</label>
+        <label className="block text-sm font-medium text-slate-700">{field.label}</label>
         {source && <SourceBadge source={source} />}
       </div>
       {field.type === "textarea" ? (
@@ -394,7 +397,7 @@ function DraftField({ field, value, source, onChange }) {
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value)}
           rows={4}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 focus:outline-none focus:border-brand"
+          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-400"
         />
       ) : (
         <input
@@ -407,7 +410,7 @@ function DraftField({ field, value, source, onChange }) {
               onChange(e.target.value);
             }
           }}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 focus:outline-none focus:border-brand"
+          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-400"
         />
       )}
     </div>

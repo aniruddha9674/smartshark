@@ -1,29 +1,21 @@
-export default function ReadinessScoreCard({ score, topReasons }) {
+export default function ReadinessScoreCard({ score, topReasons = [] }) {
   return (
-    <div style={styles.card}>
-      <h3 style={styles.heading}>Readiness Score</h3>
-      <div style={styles.scoreRow}>
-        <span style={styles.scoreNumber}>{score}</span>
-        <span style={styles.scoreOutOf}>/ 100</span>
+    <div className="card max-w-sm p-6">
+      <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+        Readiness Score
+      </h3>
+      <div className="mt-3 flex items-baseline gap-1">
+        <span className="text-4xl font-bold text-slate-900">{score}</span>
+        <span className="text-sm text-slate-500">/ 100</span>
       </div>
-      <ul style={styles.reasonList}>
+      <ul className="mt-4 space-y-2">
         {topReasons.map((r) => (
-          <li key={r.label} style={styles.reasonItem}>
-            {r.label} — <span style={styles.weight}>{r.weight} impact</span>
+          <li key={r.label} className="text-sm text-slate-700">
+            {r.label} —{" "}
+            <span className="text-xs text-slate-500">{r.weight} impact</span>
           </li>
         ))}
       </ul>
     </div>
   );
 }
-
-const styles = {
-  card: { background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "10px", padding: "24px", maxWidth: "360px" },
-  heading: { marginBottom: "8px", color: "var(--color-primary)" },
-  scoreRow: { display: "flex", alignItems: "baseline", gap: "4px", marginBottom: "16px" },
-  scoreNumber: { fontSize: "2.5rem", fontWeight: 700, color: "var(--color-primary)" },
-  scoreOutOf: { color: "var(--color-text-muted)" },
-  reasonList: { listStyle: "none", display: "flex", flexDirection: "column", gap: "6px" },
-  reasonItem: { fontSize: "0.9rem" },
-  weight: { color: "var(--color-text-muted)", fontSize: "0.85rem" },
-};

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, getErrorMessage } from "../lib/api";
 
 const inputClass =
-  "px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand w-full";
+  "px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 outline-none focus:border-indigo-400 w-full";
 
 export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) {
   const [form, setForm] = useState({
@@ -38,22 +38,22 @@ export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-6"
       onClick={onClose}
     >
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
-        className="w-full max-w-md flex flex-col gap-4 p-8 bg-zinc-900 border border-zinc-800 rounded-xl"
+        className="w-full max-w-md flex flex-col gap-4 p-8 bg-white border border-slate-200 rounded-xl"
       >
         <div>
           <h2 className="text-xl font-semibold">Make an offer</h2>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-slate-500 mt-1">
             {business?.companyName} · {pitch.title}
           </p>
         </div>
 
-        <label className="flex flex-col gap-1.5 text-sm text-zinc-400">
+        <label className="flex flex-col gap-1.5 text-sm text-slate-500">
           Amount (₹) *
           <input
             type="number"
@@ -65,7 +65,7 @@ export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) 
           />
         </label>
 
-        <label className="flex flex-col gap-1.5 text-sm text-zinc-400">
+        <label className="flex flex-col gap-1.5 text-sm text-slate-500">
           Equity requested (%) *
           <input
             type="number"
@@ -79,7 +79,7 @@ export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) 
           />
         </label>
 
-        <label className="flex flex-col gap-1.5 text-sm text-zinc-400">
+        <label className="flex flex-col gap-1.5 text-sm text-slate-500">
           Message (optional)
           <textarea
             rows={3}
@@ -90,12 +90,12 @@ export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) 
           />
         </label>
 
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-slate-500">
           Offer expires in 7 days.
         </p>
 
         {error && (
-          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+          <div className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-600 rounded-lg">
             {error}
           </div>
         )}
@@ -104,14 +104,14 @@ export default function MakeOfferModal({ pitch, business, onClose, onSuccess }) 
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg"
+            className="btn-secondary"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium disabled:opacity-50"
+            className="btn-primary"
           >
             {loading ? "Sending..." : "Send offer"}
           </button>

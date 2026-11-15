@@ -6,10 +6,10 @@ export default function Shortlist() {
   const { data: matches, isLoading, error } = useInvestorFeed({ limit: 100 });
   const shortlisted = (matches || []).filter((m) => m.status === "shortlisted");
 
-  if (isLoading) return <div className="text-zinc-500">Loading...</div>;
+  if (isLoading) return <div className="text-slate-500">Loading...</div>;
   if (error) {
     return (
-      <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
+      <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 text-red-600 rounded-lg">
         {getErrorMessage(error)}
       </div>
     );
@@ -17,10 +17,10 @@ export default function Shortlist() {
   if (shortlisted.length === 0) {
     return (
       <div className="text-center py-16">
-        <p className="text-zinc-500 mb-4">Nothing shortlisted yet.</p>
+        <p className="text-slate-500 mb-4">Nothing shortlisted yet.</p>
         <Link
           to="/dashboard/feed"
-          className="inline-block px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium"
+          className="btn-primary"
         >
           Browse feed
         </Link>
@@ -31,7 +31,7 @@ export default function Shortlist() {
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-6">Shortlisted</h1>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="joined-grid grid-cols-2">
         {shortlisted.map((match) => {
           const b = match.business;
           const initials = (b.companyName || "?")
@@ -45,7 +45,7 @@ export default function Shortlist() {
             <Link
               key={match.id}
               to={`/dashboard/match/${match.id}`}
-              className="p-5 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors"
+              className="joined-cell block p-5 transition-colors hover:bg-slate-50"
             >
               <div className="flex items-start gap-4">
                 {b.logoUrl ? (
@@ -56,18 +56,18 @@ export default function Shortlist() {
                     className="w-12 h-12 rounded-lg object-contain bg-white p-1 flex-shrink-0"
                   />
                 ) : (
-                  <div className="w-12 h-12 rounded-lg bg-zinc-800 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+                  <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-semibold flex-shrink-0">
                     {initials}
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-zinc-100 truncate">
+                  <h3 className="font-semibold text-slate-900 truncate">
                     {b.companyName}
                   </h3>
-                  <p className="text-sm text-zinc-500 mt-1">
+                  <p className="text-sm text-slate-500 mt-1">
                     {b.sector || "—"} {b.city ? `· ${b.city}` : ""}
                   </p>
-                  <div className="text-brand font-medium text-sm mt-2">
+                  <div className="text-indigo-600 font-medium text-sm mt-2">
                     {match.matchScore}% match
                   </div>
                 </div>
