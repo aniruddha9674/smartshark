@@ -13,8 +13,37 @@ export const recomputeForInvestor = async (req, res) => {
   res.json(result);
 };
 
+const toNumber = (value) => {
+  if (value == null || value === "") return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
 export const getInvestorFeed = async (req, res) => {
-  const feed = await matchService.getInvestorFeed(req.user.id, req.query);
+  const {
+    sector,
+    minAsk,
+    maxAsk,
+    verifiedOnly,
+    minReadiness,
+    sortBy,
+  } = req.query;
+
+  const feed = await matchService.getInvestorFeed(req.user.id, {
+    minScore: toNumber(req.query.minScore) ?? 0,
+    limit: toNumber(req.query.limit) ?? 20,
+    offset: toNumber(req.query.offset) ?? 0,
+    sector: sector ? String(sector) : undefined,
+    minAsk: toNumber(minAsk),
+    maxAsk: toNumber(maxAsk),
+    verifiedOnly:
+      verifiedOnly === true || verifiedOnly === "true" || verifiedOnly === "1",
+    minReadiness: toNumber(minReadiness),
+    sortBy: ["relevance", "readiness", "newest"].includes(sortBy)
+      ? sortBy
+      : "relevance",
+  });
+
   res.json({ matches: feed });
 };
 

@@ -8,6 +8,8 @@ import mongoose from "mongoose";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import * as schema from "../src/models/postgres/index.js";
 
+process.env.NODE_ENV = "test";
+process.env.DEV_BYPASS_AUTH = "true";
 process.env.CLOUDINARY_CLOUD_NAME ||= "ci-dummy";
 process.env.CLOUDINARY_API_KEY ||= "000000000000000";
 process.env.CLOUDINARY_API_SECRET ||= "ci-dummy-secret";

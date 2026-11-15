@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, getErrorMessage } from "../../lib/api";
 
@@ -7,6 +7,7 @@ const PAGE_SIZE = 20;
 
 export default function Feed() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [matches, setMatches] = useState([]);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -15,15 +16,35 @@ export default function Feed() {
   const [error, setError] = useState("");
 
   const sentinelRef = useRef(null);
+  const defaultsApplied = useRef(false);
+
+  const sector = searchParams.get("sector") || "";
+  const minAsk = searchParams.get("minAsk") || "";
+  const maxAsk = searchParams.get("maxAsk") || "";
+  const verifiedOnly = searchParams.get("verified") === "true";
+  const sortBy = searchParams.get("sortBy") || "relevance";
+  const filterKey = searchParams.toString();
+
+  const setFilter = (key, value) => {
+    const next = new URLSearchParams(searchParams);
+    if (value === "" || value == null) next.delete(key);
+    else next.set(key, value);
+    setSearchParams(next, { replace: true });
+  };
 
   // ─── Fetch a page ─────────────────────────────────────────
   const fetchPage = async (currentOffset) => {
     setLoading(true);
     setError("");
     try {
-      const res = await api.get("/api/matches/investor/feed", {
-        params: { limit: PAGE_SIZE, offset: currentOffset, minScore: 0 },
-      });
+      const params = { limit: PAGE_SIZE, offset: currentOffset, minScore: 0 };
+      if (sector) params.sector = sector;
+      if (minAsk !== "") params.minAsk = minAsk;
+      if (maxAsk !== "") params.maxAsk = maxAsk;
+      if (verifiedOnly) params.verifiedOnly = true;
+      if (sortBy !== "relevance") params.sortBy = sortBy;
+
+      const res = await api.get("/api/matches/investor/feed", { params });
       const page = Array.isArray(res.data) ? res.data : res.data?.matches ?? [];
       setMatches((prev) => (currentOffset === 0 ? page : [...prev, ...page]));
       setHasMore(page.length === PAGE_SIZE);
@@ -34,10 +55,59 @@ export default function Feed() {
     }
   };
 
+  // ─── Apply saved investor preferences on first visit ──────
   useEffect(() => {
-    fetchPage(0);
-    setOffset(0);
+    if (defaultsApplied.current) return;
+    defaultsApplied.current = true;
+
+    const hasFilter = ["sector", "minAsk", "maxAsk", "verified", "sortBy"].some(
+      (key) => searchParams.get(key)
+    );
+    if (hasFilter) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await api.get("/api/investor/me");
+        const profile = res.data?.profile;
+        if (!profile || cancelled) return;
+
+        const next = new URLSearchParams(searchParams);
+        let changed = false;
+
+        if (profile.investmentFocus) {
+          next.set("sector", profile.investmentFocus);
+          changed = true;
+        }
+        if (profile.minTicketSize != null) {
+          next.set("minAsk", String(profile.minTicketSize));
+          changed = true;
+        }
+        if (profile.maxTicketSize != null) {
+          next.set("maxAsk", String(profile.maxTicketSize));
+          changed = true;
+        }
+
+        if (changed) setSearchParams(next, { replace: true });
+      } catch {
+        // No investor preferences available — keep the unfiltered feed.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // ─── Refetch when filters change (debounced) ──────────────
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setOffset(0);
+      fetchPage(0);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [filterKey]);
 
   // ─── Infinite scroll ──────────────────────────────────────
   useEffect(() => {
@@ -93,6 +163,86 @@ export default function Feed() {
           >
             {recomputing ? "Recomputing..." : "Refresh"}
           </button>
+        </div>
+      </div>
+
+      {/* ─── Filter bar ─────────────────────────────────────── */}
+      <div className="mb-6 p-4 bg-zinc-900 border border-zinc-800 rounded-xl">
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-zinc-500">Sector</span>
+            <input
+              value={sector}
+              onChange={(e) => setFilter("sector", e.target.value)}
+              placeholder="e.g. SaaS"
+              className="w-44 px-3 py-1.5 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-zinc-500">Min ticket (₹)</span>
+            <input
+              type="number"
+              min="0"
+              value={minAsk}
+              onChange={(e) => setFilter("minAsk", e.target.value)}
+              placeholder="0"
+              className="w-36 px-3 py-1.5 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-zinc-500">Max ticket (₹)</span>
+            <input
+              type="number"
+              min="0"
+              value={maxAsk}
+              onChange={(e) => setFilter("maxAsk", e.target.value)}
+              placeholder="Any"
+              className="w-36 px-3 py-1.5 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand"
+            />
+          </label>
+
+          <label className="flex items-center gap-2 pb-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={verifiedOnly}
+              onChange={(e) =>
+                setFilter("verified", e.target.checked ? "true" : "")
+              }
+              className="accent-brand"
+            />
+            <span className="text-sm text-zinc-300">Verified only</span>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-zinc-500">Sort by</span>
+            <select
+              value={sortBy}
+              onChange={(e) =>
+                setFilter(
+                  "sortBy",
+                  e.target.value === "relevance" ? "" : e.target.value
+                )
+              }
+              className="px-3 py-1.5 text-sm bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 outline-none focus:border-brand"
+            >
+              <option value="relevance">Relevance</option>
+              <option value="readiness">Readiness</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+
+          {(sector || minAsk || maxAsk || verifiedOnly || sortBy !== "relevance") && (
+            <button
+              onClick={() =>
+                setSearchParams(new URLSearchParams(), { replace: true })
+              }
+              className="pb-2 text-sm text-zinc-400 hover:text-zinc-100"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import MyOffers from "./investor/MyOffers";
 import Portfolio from "./investor/Portfolio";
 import Messages from "./Messages";
 import Notifications from "./Notifications";
+import Settings from "./investor/Settings";
 import MyBusinesses from "./business/MyBusinesses";
 import BusinessProfile from "./business/BusinessDetail";
 import BusinessDetail from "./investor/CompanyProfile";
@@ -139,6 +140,7 @@ export default function Dashboard() {
             {/* ─── Shared ─── */}
             <Route path="/messages" element={<Messages />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/settings" element={<Settings />} />
 
             {/* ─── Catch-all (must be last) ─── */}
             <Route

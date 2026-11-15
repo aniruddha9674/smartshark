@@ -308,12 +308,83 @@ export const recomputeForInvestor = async (userId) => {
 // ─── Feed queries ──────────────────────────────────────────────
 export const getInvestorFeed = async (
   userId,
-  { minScore = 0, limit = 20, offset = 0 } = {}
+  {
+    minScore = 0,
+    limit = 20,
+    offset = 0,
+    sector,
+    minAsk,
+    maxAsk,
+    verifiedOnly = false,
+    minReadiness,
+    sortBy = "relevance",
+  } = {}
 ) => {
-  const cacheKey = `feed:v2:${userId}:${minScore}:${limit}:${offset}`;
+  const sectorTerms = String(sector || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const minAskNum = minAsk != null && minAsk !== "" ? Number(minAsk) : null;
+  const maxAskNum = maxAsk != null && maxAsk !== "" ? Number(maxAsk) : null;
+  const minReadinessNum =
+    minReadiness != null && minReadiness !== "" ? Number(minReadiness) : null;
+  const onlyVerified = verifiedOnly === true || verifiedOnly === "true" || verifiedOnly === "1";
+
+  const cacheKey = [
+    "feed:v3",
+    userId,
+    minScore,
+    limit,
+    offset,
+    sectorTerms.join("|"),
+    minAskNum ?? "",
+    maxAskNum ?? "",
+    onlyVerified ? 1 : 0,
+    minReadinessNum ?? "",
+    sortBy,
+  ].join(":");
 
   const cached = await cacheGet(cacheKey);
   if (cached) return cached;
+
+  const conditions = [
+    sql`m.investor_id = ${userId}`,
+    sql`m.status != 'passed'`,
+    sql`m.match_score >= ${minScore}`,
+  ];
+
+  if (sectorTerms.length > 0) {
+    const sectorConditions = sectorTerms.map(
+      (term) =>
+        sql`(b.sector ILIKE ${`%${term}%`} OR b.industrial_classification ILIKE ${`%${term}%`})`
+    );
+    conditions.push(sql`(${sql.join(sectorConditions, sql` OR `)})`);
+  }
+
+  if (minAskNum != null && Number.isFinite(minAskNum)) {
+    conditions.push(sql`b.funding_ask >= ${minAskNum}`);
+  }
+  if (maxAskNum != null && Number.isFinite(maxAskNum)) {
+    conditions.push(sql`b.funding_ask <= ${maxAskNum}`);
+  }
+  if (onlyVerified) {
+    conditions.push(sql`b.verification_tier = 'verified'`);
+  }
+  if (minReadinessNum != null && Number.isFinite(minReadinessNum)) {
+    conditions.push(
+      sql`COALESCE(b.current_readiness_score, 0) >= ${minReadinessNum}`
+    );
+  }
+
+  const whereClause = sql.join(conditions, sql` AND `);
+
+  const orderClause =
+    sortBy === "readiness"
+      ? sql`b.current_readiness_score DESC NULLS LAST, feed_rank DESC, m.match_score DESC`
+      : sortBy === "newest"
+        ? sql`b.created_at DESC`
+        : sql`feed_rank DESC, m.match_score DESC`;
 
   // Raw SQL — bypasses the Drizzle model for `badges`/`curated_note`.
   const result = await db.execute(sql`
@@ -340,10 +411,8 @@ export const getInvestorFeed = async (
       ) AS feed_rank
     FROM matches m
     JOIN businesses b ON b.id = m.business_id
-    WHERE m.investor_id = ${userId}
-      AND m.status != 'passed'
-      AND m.match_score >= ${minScore}
-    ORDER BY feed_rank DESC, m.match_score DESC
+    WHERE ${whereClause}
+    ORDER BY ${orderClause}
     LIMIT ${limit}
     OFFSET ${offset}
   `);
@@ -479,7 +548,7 @@ export const shortlistMatch = async (matchId, userId) => {
     .where(eq(matches.id, matchId))
     .returning();
 
-  await cacheDel(`feed:v2:${userId}:*`);
+  await cacheDel(`feed:v3:${userId}:*`);
 
   return updated;
 };
@@ -493,7 +562,7 @@ export const passMatch = async (matchId, userId) => {
     .where(eq(matches.id, matchId))
     .returning();
 
-  await cacheDel(`feed:${userId}:*`);
+  await cacheDel(`feed:v3:${userId}:*`);
 
   return updated;
 };
